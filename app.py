@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, PhotoImage
 import customtkinter as ctk
 import os
 import sys
@@ -16,7 +16,7 @@ import time
 import threading
 import yaml
 
-def get_default_file_path():
+def get_own_file_path():
     if getattr(sys, 'frozen', False):  # Check if running as compiled .exe
         # If running as a PyInstaller bundled app, use the location of the executable
         application_path = os.path.dirname(sys.executable)
@@ -25,10 +25,10 @@ def get_default_file_path():
         application_path = os.path.dirname(os.path.realpath(__file__))
 
     # Join the path to defaults.txt with the application path
-    return os.path.join(application_path, "defaults.txt")
+    return application_path
 
 # Path to defaults.txt file
-defaults_file_path = get_default_file_path()
+defaults_file_path = os.path.join(get_own_file_path(), "defaults.txt")
 
 # Function to read defaults from the defaults.txt file
 def load_defaults():
@@ -39,7 +39,8 @@ def load_defaults():
         "theme": "Seabirds",
         "creator_name": "",
         "project": "",
-        "defaultrclonecommand": ""
+        "defaultrclonecommand": "",
+        "uploadbydefault": "False"
     }
     
     if os.path.exists(defaults_file_path):
@@ -47,7 +48,13 @@ def load_defaults():
             for line in file:
                 key, value = line.strip().split("=")
                 if key in defaults:
-                    defaults[key] = value
+                    if(key == "uploadbydefault"):
+                        if value == "True":
+                            defaults[key] = True
+                        else:
+                            defaults[key] = False
+                    else:
+                        defaults[key] = value
     
     return defaults
 
@@ -137,6 +144,7 @@ def process_folders_and_extract_gps_and_times():
     folders = sorted([f for f in glob.glob(os.path.join(drone_backup, "*")) if os.path.isdir(f)])  # Sort folders alphabetically
     
     folder_data = {}
+    already_copied.clear()  # Clear the set of already copied folders
     
     for folder in folders:
         # Check if 'copied.txt' exists, mark as already copied
@@ -320,6 +328,7 @@ def copy_and_merge_folders(merged_folders, folder_data, folder_info, progress_ba
                 folder_grouping = folder_entries[entry_index]["grouping"].get()
                 folder_area = folder_entries[entry_index]["area"].get()
                 folder_datetime = folder_entries[entry_index]["datetime"].get()
+                folder_creator_name = folder_entries[entry_index]["creator_name"].get()
 
                 new_folder_name = f"{folder_grouping}_{folder_area}_{folder_datetime}/images"
                 new_folder_name = new_folder_name.lower().replace("æ", "ae").replace("ø", "oe").replace("å", "aa")
@@ -333,8 +342,8 @@ def copy_and_merge_folders(merged_folders, folder_data, folder_info, progress_ba
                     progress_label.config(text="Copying cancelled!")
                     messagebox.showinfo("Cancelled", "Copying process was cancelled.")
                     time.sleep(1)  # Wait for 1 second before updating the text
-                    cancel_button.config(text="Copy, merge (and upload) folders", command=lambda: run_copy_in_thread(merged_folders, folder_data, folder_info, progress_bar, progress_label, folder_entries, cancel_button))
-                    cancel_button.config(state=tk.NORMAL)
+                    cancel_button.configure(text="Copy, merge (and upload) folders", command=lambda: run_copy_in_thread(merged_folders, folder_data, folder_info, progress_bar, progress_label, folder_entries, cancel_button))
+                    cancel_button.configure(state=tk.NORMAL)
                     return
 
                 shutil.copy(file_path, destination_folder)
@@ -357,7 +366,7 @@ def copy_and_merge_folders(merged_folders, folder_data, folder_info, progress_ba
                 yaml_data = {
                     'area': folder_area,
                     'classify': True,
-                    'creator_name': creator_name_var.get(),
+                    'creator_name': folder_creator_name,
                     'datetime': folder_datetime,
                     'grouping': folder_grouping,
                     'mosaic': True,
@@ -376,7 +385,7 @@ def copy_and_merge_folders(merged_folders, folder_data, folder_info, progress_ba
 
     app.config(cursor="")  # Re-enable input
     progress_label.config(text="Copying complete!")
-    cancel_button.config(text="Copy and merge folders", command=lambda: run_copy_in_thread(merged_folders, folder_data, folder_info, progress_bar, progress_label, folder_entries, cancel_button))
+    cancel_button.configure(text="Copy and merge folders", command=lambda: run_copy_in_thread(merged_folders, folder_data, folder_info, progress_bar, progress_label, folder_entries, cancel_button))
     #messagebox.showinfo("Success", "Folders copied and merged successfully.")
     print("Folders copied and merged successfully.")
     
@@ -405,15 +414,24 @@ def copy_and_merge_folders(merged_folders, folder_data, folder_info, progress_ba
 def cancel_copy_process(cancel_button):
     global cancel_copy
     cancel_copy = True
-    cancel_button.config(state=tk.DISABLED)  # Disable the cancel button during the process
+    cancel_button.configure(state=tk.DISABLED)  # Disable the cancel button during the process
 
 # Wrapper function to run the copying process in a separate thread
 def run_copy_in_thread(merged_folders, folder_data, folder_info, progress_bar, progress_label, folder_entries, cancel_button):
     global cancel_copy
     cancel_copy = False  # Reset cancellation flag
-    cancel_button.config(text="Cancel", command=lambda: cancel_copy_process(cancel_button))  # Change to cancel button
-    cancel_button.config(state=tk.NORMAL)  # Enable cancel button
+
+    # Change to cancel button and update the text correctly using configure
+    cancel_button.configure(text="Cancel", command=lambda: cancel_copy_process(cancel_button))  
+    cancel_button.configure(state=tk.NORMAL)  # Enable cancel button
+
     threading.Thread(target=copy_and_merge_folders, args=(merged_folders, folder_data, folder_info, progress_bar, progress_label, folder_entries, cancel_button)).start()
+
+# Function to zoom and pan to a folder's GPS location
+def zoom_to_folder(folder, folder_data, map_widget):
+    lat, lon = folder_data[folder]["average_gps"]
+    map_widget.set_position(lat, lon)
+    map_widget.set_zoom(15)  # Adjust the zoom level as needed
 
 # Function to show the results in a new window with a scrollable left pane and minimum width
 def show_results_window(folder_data, folder_info, merged_folders):
@@ -429,7 +447,7 @@ def show_results_window(folder_data, folder_info, merged_folders):
     left_frame_container.pack(side="left", fill="both", expand=True)
 
     # Create a canvas and a vertical scrollbar for the left pane
-    canvas = tk.Canvas(left_frame_container)
+    canvas = ctk.CTkCanvas(left_frame_container)
     scrollbar = tk.Scrollbar(left_frame_container, orient="vertical", command=canvas.yview)
     scrollable_frame = tk.Frame(canvas)
 
@@ -452,6 +470,12 @@ def show_results_window(folder_data, folder_info, merged_folders):
 
     # List to store entries for each merged group (grouping, area, datetime)
     folder_entries = []
+
+    # Load the location icon image
+    location_icon = tk.PhotoImage(file=os.path.join(get_own_file_path(), "location_icon.png"))
+    # Scale the image to be smaller (subsample)
+    scalefactor = round(location_icon.height() / 20)
+    location_icon = location_icon.subsample(scalefactor, scalefactor)
 
     # Display already copied folders at the top of the scrollable frame
     if already_copied:
@@ -490,7 +514,16 @@ def show_results_window(folder_data, folder_info, merged_folders):
             folder_frame = tk.Frame(scrollable_frame)
             folder_frame.pack(fill="x", padx=5, pady=5)
 
-            tk.Label(folder_frame, text=f"{folder_name}", font='Helvetica 10', fg='black').pack(anchor="w")  # Display folder name
+            folder_label_frame = tk.Frame(folder_frame)
+            folder_label_frame.pack(fill="x")
+
+            # Folder name label
+            tk.Label(folder_label_frame, text=f"{folder_name}", font='Helvetica 10 bold', fg='black').pack(side="left")
+
+            # Create a button with the location icon and zoom functionality
+            zoom_button = tk.Button(folder_label_frame, image=location_icon, command=lambda folder=folder: zoom_to_folder(folder, folder_data, map_widget))
+            zoom_button.image = location_icon  # Keep a reference to the image to prevent garbage collection
+            zoom_button.pack(side="left", padx=5, pady=0)
 
             # Check if the folder has only three parts in its name (like DJI_202405221908_010)
             folder_name_parts = folder_name.split("_")
@@ -526,6 +559,15 @@ def show_results_window(folder_data, folder_info, merged_folders):
                 datetime_entry.pack(side="left", padx=5)
                 entry_group["datetime"] = datetime_entry
 
+                # Add a creator name field with default from creator_name_var
+                new_creator_frame = tk.Frame(folder_frame)
+                new_creator_frame.pack(fill="x")
+                tk.Label(new_creator_frame, text="Creator name:", font='Helvetica 10').pack(side="left", anchor="w", padx=(10, 2))
+                creator_name_entry = tk.Entry(new_creator_frame, width=25)
+                creator_name_entry.insert(0, creator_name_var.get())  # Default from the first page
+                creator_name_entry.pack(side="left", padx=5, pady=5)
+                entry_group["creator_name"] = creator_name_entry
+
                 folder_entries.append(entry_group)
 
         # Add a separator line between each mission
@@ -542,8 +584,11 @@ def show_results_window(folder_data, folder_info, merged_folders):
     upload_checkbox = tk.Checkbutton(scrollable_frame, text="Also upload using rclone", variable=upload_var)
     upload_checkbox.pack(pady=5)
     
-    # Add a button at the bottom of the scrollable frame
-    cancel_button = tk.Button(scrollable_frame, text="Copy, merge (and upload) folders", command=lambda: run_copy_in_thread(merged_folders, folder_data, folder_info, progress_bar, progress_label, folder_entries, cancel_button))
+    # Add the button at the bottom of the scrollable frame
+    cancel_button = ctk.CTkButton(scrollable_frame, 
+                                text="Copy, merge (and upload) folders",
+                                width=300,
+                                command=lambda: run_copy_in_thread(merged_folders, folder_data, folder_info, progress_bar, progress_label, folder_entries, cancel_button))
     cancel_button.pack(pady=5)
 
     # Right side: Map showing the average GPS points
@@ -593,7 +638,7 @@ organisation_var = tk.StringVar(value=defaults.get("organisation", ""))
 theme_var = tk.StringVar(value=defaults.get("theme", "")) 
 creator_name_var = tk.StringVar(value=defaults.get("creator_name", "")) 
 project_var = tk.StringVar(value=defaults.get("project", ""))
-upload_var = tk.BooleanVar(value=False)
+upload_var = tk.BooleanVar(value=defaults.get("uploadbydefault", "False"))
 
 # Folder 2 selection (Drone Backup)
 folder2_frame = ctk.CTkFrame(app)
