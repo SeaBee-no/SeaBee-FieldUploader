@@ -234,13 +234,38 @@ def merge_folders(folder_data):
 # Function to get place name from API
 def get_place_name(lat, lon):
     url = f"https://ws.geonorge.no/stedsnavn/v1/punkt?nord={lat}&ost={lon}&koordsys=4326&radius=500&treffPerSide=500"
+    
+    # Use the navneobjekttype field from the API response to filter natural features
+    # List of all features possible can be found here https://objektkatalog.geonorge.no/Objekttype/Index/EAID_5AF1F227_04FD_4327_AF2E_931BEA482993
+    natural_features = {
+        "Annen terrengdetalj", "Annen vanndetalj", "Bakke", "Bakke (Veg)", "Bakke i sjø", "Bakketopp i sjø", 
+        "Banke", "Banke i sjø", "Basseng i sjø", "Bekk", "Berg", "Botn", "Båe", "Båe i sjø", "Dal", "Dalføre", 
+        "Del av innsjø", "Egg i sjø", "Eid", "Eid i sjø", "Elv", "Elvemel", "Elvesving", "Eng", "Fjell", "Fjell i dagen", 
+        "Fjellkant", "Fjellkjede i sjø", "Fjellområde", "Fjellside", "Fjelltopp i sjø", "Fjord", "Fjordmunning", 
+        "Fonn", "Foss", "Grotte", "Grunne", "Grunne i sjø", "Gruppe av tjern", "Gruppe av vann", "Halvøy", 
+        "Halvøy i sjø", "Haug", "Havdyp", "Havområde", "Hei", "Heller", "Holme", "Holme i sjø", "Holmegruppe i sjø", 
+        "Hylle", "Hylle i sjø", "Høl", "Høyde", "Innsjø", "Isbre", "Iskuppel", "Juv", "Kanal", "Kilde", "Klakk i sjø", 
+        "Klopp", "Krater", "Landskapsområde", "Li", "Lon", "Mo", "Molo", "Myr", "Nes", "Nes i sjø", "Nes ved elver", 
+        "Os", "Park", "Platå i sjø", "Pytt", "Ras i sjø", "Renne/Kløft i sjø", "Rev i sjø", "Rygg", "Rygg i sjø", 
+        "Sadel i sjø", "Sand", "Senkning", "Sjødetalj", "Sjømerke", "Sjøstykke", "Skar", "Skjær", "Skjær i sjø", 
+        "Skog", "Skogholt", "Skogområde", "Skredområde", "Slette", "Sokkel i sjø", "Stein", "Sti", "Strand", 
+        "Strand i sjø", "Stryk", "Stup", "Stø", "Sund", "Sund i sjø", "Søkk", "Søkk i sjø", "Tjern", "Topp", 
+        "Undersjøisk vegg", "Ur", "Utmark", "Vann", "Verneområde", "Vidde", "Vik", "Vik i sjø", "Vulkan i sjø", 
+        "Våg i sjø", "Øy", "Øy i sjø", "Øygruppe", "Øygruppe i sjø", "Øyr", "Ås", "Våtmarksområde", 
+        "Friluftsområde", "Egg", "Fjellvegg", "Del av vann", "Hammar", "Sva"
+    }
+
     response = requests.get(url)
     if response.status_code == 200:
         data = response.json()
         if data and 'navn' in data and data['navn']:
-            closest = min(data['navn'], key=lambda x: x['meterFraPunkt'])
-            place_name = closest['stedsnavn'][0]['skrivemåte']
-            return place_name
+            # Filter places based on 'navneobjekttype' being a natural feature
+            natural_places = [place for place in data['navn'] if place['navneobjekttype'] in natural_features]
+            if natural_places:
+                # Get the closest natural place
+                closest_natural_place = min(natural_places, key=lambda x: x['meterFraPunkt'])
+                place_name = closest_natural_place['stedsnavn'][0]['skrivemåte']
+                return place_name
     return None
 
 # Function to get municipality and county from API
