@@ -16,19 +16,31 @@ import time
 import threading
 import yaml
 
-def get_own_file_path():
+# General function to get the full path of the file (for use in both exe and py)
+def get_own_file_path(filename=None):
+    """ Get the path to the file, works for both .exe and .py """
     if getattr(sys, 'frozen', False):  # Check if running as compiled .exe
-        # If running as a PyInstaller bundled app, use the location of the executable
-        application_path = os.path.dirname(sys.executable)
+        # Use the location of the executable
+        if filename == "defaults.txt":
+            application_path = os.path.dirname(sys.executable)
+        else:
+            application_path = os.path.abspath(os.path.join(os.path.dirname(__file__)))
     else:
-        # If running as a normal Python script, use the location of the script
+        # Use the location of the script
         application_path = os.path.dirname(os.path.realpath(__file__))
-
-    # Join the path to defaults.txt with the application path
+    
+    if filename:
+        return os.path.join(application_path, filename)
     return application_path
 
 # Path to defaults.txt file
-defaults_file_path = os.path.join(get_own_file_path(), "defaults.txt")
+defaults_file_path = get_own_file_path("defaults.txt")
+
+# Example usage for loading an image
+location_icon_path = get_own_file_path("location_icon.png")
+
+# Load the icon image path
+icon_path = get_own_file_path("seabee.ico")
 
 # Function to read defaults from the defaults.txt file
 def load_defaults():
@@ -245,7 +257,10 @@ def get_municipality_and_county(lat, lon):
 # Function to ask API about each folder
 def ask_api_for_folders(folder_data):
     folder_info = {}
-    for folder, data in folder_data.items():
+    for i, (folder, data) in enumerate(folder_data.items(), start=1):
+        start_button.configure(text=f"Processing... Asking API ({i}/{len(folder_data)})")
+        app.update_idletasks()
+
         lat, lon = data["average_gps"]
         place_name = get_place_name(lat, lon)
         municipality, county = get_municipality_and_county(lat, lon)
@@ -271,16 +286,27 @@ def get_municipality_and_county_from_avg_gps(gps_positions):
 
 # Function triggered when 'Start Processing' button is clicked
 def start_processing():
+    start_button.configure(text="Processing... Getting EXIF")
+    app.update_idletasks()
     folder_data = process_folders_and_extract_gps_and_times()
 
+    start_button.configure(text="Processing... Merging Folders")
+    app.update_idletasks()
     # Merge folders based on time and distance criteria
     merged_folders = merge_folders(folder_data)
 
+    start_button.configure(text="Processing... Asking API")
+    app.update_idletasks()
     # Ask API for additional information about each folder
     folder_info = ask_api_for_folders(folder_data)
 
+    start_button.configure(text="Processing... Showing window")
+    app.update_idletasks()
     # Show the results in a new window
     show_results_window(folder_data, folder_info, merged_folders)
+
+    start_button.configure(text="Start Processing")  # Reset the text
+    app.update_idletasks()
 
 # Global variable to signal cancellation of the copy process
 cancel_copy = False
@@ -439,6 +465,12 @@ def show_results_window(folder_data, folder_info, merged_folders):
     results_window.geometry("1024x800")  # Adjust size of the results window
     results_window.title("Merging Suggestions")
 
+    # Set the window icon for the taskbar and title bar
+    try:
+        results_window.iconbitmap(icon_path)  # Set the .ico file as the icon
+    except Exception as e:
+        print(f"Error loading icon: {e}")
+
     # Minimum width for the scrollable frame
     min_width = 600
 
@@ -472,7 +504,7 @@ def show_results_window(folder_data, folder_info, merged_folders):
     folder_entries = []
 
     # Load the location icon image
-    location_icon = tk.PhotoImage(file=os.path.join(get_own_file_path(), "location_icon.png"))
+    location_icon = tk.PhotoImage(file = location_icon_path)
     # Scale the image to be smaller (subsample)
     scalefactor = round(location_icon.height() / 20)
     location_icon = location_icon.subsample(scalefactor, scalefactor)
@@ -621,6 +653,12 @@ def show_results_window(folder_data, folder_info, merged_folders):
 app = ctk.CTk()
 app.geometry("700x500")  # Adjust the main window size to 500px height
 app.title("SeaBee Processing App")
+
+# Set the window icon for the taskbar and title bar
+try:
+    app.iconbitmap(icon_path)  # Set the .ico file as the icon
+except Exception as e:
+    print(f"Error loading icon: {e}")
 
 # Information label at the top
 info_label1 = ctk.CTkLabel(app, 
