@@ -18,7 +18,7 @@ import yaml
 
 # General function to get the full path of the file (for use in both exe and py)
 def get_own_file_path(filename=None):
-    """ Get the path to the file, works for both .exe and .py """
+    # Get the path to the file, works for both .exe and .py
     if getattr(sys, 'frozen', False):  # Check if running as compiled .exe
         # Use the location of the executable
         if filename == "defaults.txt":
