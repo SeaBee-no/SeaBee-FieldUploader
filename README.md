@@ -48,7 +48,7 @@ organisation=NINA
 theme=Seabirds
 creator_name=Sindre Molværsmyr
 project=SEAPOP Kartlegging 2025
-defaultrclonecommand="C:/Users/sindre.molvarsmyr/OneDrive - NINA/Portable tech/rclone-v1.60.1-windows-amd64/rclone.exe" copy LOCAL minio:seabirds/2024 --progress
+defaultrclonecommand="C:/absolute/path/to/rclone.exe" copy LOCAL minio:seabirds/2024 --progress
 uploadbydefault=True
 ```
 
