@@ -1,0 +1,5 @@
+# defaults.txt
+theme=Seabirds
+organisation=NINA
+creator_name=team 2 (example)
+project=SEAPOP 3B - Kartlegging av hekkebestander (example)

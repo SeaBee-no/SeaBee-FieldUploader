@@ -1,8 +1,0 @@
-drone_backup=D:/test_SD
-seabee_structure=D:/test_seabee
-organisation=NINA
-theme=Seabirds
-creator_name=Sindre Molværsmyr
-project=SEAPOP Kartlegging 2025
-defaultrclonecommand="C:/absolute/path/to/rclone.exe" copy LOCAL minio:seabirds/2025 --progress
-uploadbydefault=True
