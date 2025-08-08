@@ -4,17 +4,20 @@
 
 The software is made to work on Windows computers without admin rights.
 
-1. **Download Rclone**  
+1. **Download the software**
+   - Download the `.zip` file from https://github.com/SeaBee-no/SeaBee-FieldUploader/releases
+
+2. **Download Rclone**  
    - Obtain the latest `rclone.exe` from https://rclone.org/downloads/  
    - Rename it to `rclone.exe` and place it in the `resources` directory.
 
-2. **Configure `rclone.conf`**  
+3. **Configure `rclone.conf`**  
    - Edit `rclone.conf` to include your SeaBee MinIO credentials.
 
-3. **Modify Default Values**
+4. **Modify Default Values**
    - Modify `defaults.txt` to change the default loaded `theme`, `organisation`, `creator_name` and `project`.
 
-3. **Install or Configure Python**
+5. **Install or Configure Python**
    - **If you dont have Python installed:**
       - Download WinPython from https://github.com/winpython/winpython/releases. Choose the latest stable `...dot.zip` file, ie. `Winpython64-3.12.10.1dot.zip`.
       - Exctract the `WPy...` folder somewhere on your computer, ie. in the `resources` folder.
@@ -30,7 +33,7 @@ The software is made to work on Windows computers without admin rights.
          ```
    - Open the `Properties` of the shortcut file, and change the paths for both `Target` and `Start in` to match the `.bat` files location.
 
-4. **Run the App in Python**  
+6. **Run the App in Python**  
    ```bash
    python app.py
    ```
