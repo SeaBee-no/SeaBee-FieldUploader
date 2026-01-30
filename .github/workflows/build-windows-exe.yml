@@ -25,13 +25,16 @@ jobs:
           pip install -r app/requirements.txt
           pip install pyinstaller
 
-      # Build a single EXE (no rclone/conf/defaults shipped)
+      - name: Debug: list app files
+        run: |
+          dir
+          dir app
+          dir app\*.py
+
       - name: Build EXE with PyInstaller
         run: |
-          cd app
-          pyinstaller --noconfirm --clean --windowed --name "SeaBee-FieldUploader" app.py
+          pyinstaller --noconfirm --clean --windowed --name "SeaBee-FieldUploader" app\REPLACE_WITH_ENTRYPOINT.py
 
-      # Package only the EXE + a README that explains required sidecar files
       - name: Create portable folder
         run: |
           mkdir dist_portable
