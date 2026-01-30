@@ -1,7 +1,7 @@
 name: Build Windows EXE
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
   push:
     tags:
       - "v*"
@@ -26,13 +26,6 @@ jobs:
           pip install -r "app/requirements.txt"
           pip install pyinstaller
 
-      - name: Debug: list app files
-        shell: powershell
-        run: |
-          Get-ChildItem
-          Get-ChildItem -Path "app"
-          Get-ChildItem -Path "app/resources"
-
       - name: Build EXE with PyInstaller (onefile)
         shell: powershell
         run: |
@@ -46,10 +39,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "release" | Out-Null
 
-          # onefile output goes directly into dist/
           Copy-Item "dist/SeaBee-FieldUploader.exe" "release/SeaBee-FieldUploader.exe"
 
-          # Sidecar config files (editable, not bundled)
           Copy-Item "app/resources/rclone.conf" "release/rclone.conf"
           Copy-Item "app/resources/defaults.txt" "release/defaults.txt"
 
