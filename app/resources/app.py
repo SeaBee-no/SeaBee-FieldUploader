@@ -13,9 +13,32 @@ import re
 
 # ─── CONFIGURATION ─────────────────────────────────────────────────────────────
 REMOTE_NAME    = 'minio'
-BUCKET_NAME    = 'seabirds'
-OBJECT_PREFIX  = 'fielduploads2025/'  # ← Remote path inside bucket
+BUCKET_NAME    = 'fielduploads'
+OBJECT_PREFIX  = 'seabirds/'  # ← Remote path inside bucket
 # ───────────────────────────────────────────────────────────────────────────────
+
+def safe_load_yaml(path: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def count_files_in_folder(folder_path: str, yaml_filename: str) -> int:
+    # Count only files directly in this folder (not recursive), excluding the metadata YAML itself
+    n = 0
+    try:
+        for name in os.listdir(folder_path):
+            full = os.path.join(folder_path, name)
+            if os.path.isfile(full) and name != yaml_filename:
+                # Optional: skip Windows recycle bin artifacts if they show up
+                if name.lower() == "thumbs.db":
+                    continue
+                n += 1
+    except Exception:
+        pass
+    return n
 
 def get_own_file_path(filename=None, from_parent=False):
     if getattr(sys, 'frozen', False):
@@ -175,23 +198,53 @@ class S3UploaderApp(ttk.Frame):
                 )
 
         # Write per-folder YAML metadata
-        meta = {
+        yaml_filename = 'fielduploads.seabee.yaml'
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        base_meta = {
             'theme':         self.theme_var.get(),
             'organisation':  self.org_var.get(),
             'creator_name':  self.creator_var.get(),
             'project':       self.project_var.get()
         }
-        yaml_text = yaml.dump(meta, sort_keys=False, allow_unicode=True)
+
         for root, dirs, files in os.walk(folder):
+            # skip the selected top folder itself (your current behavior)
             if os.path.abspath(root) == os.path.abspath(folder):
                 continue
+
+            # skip recycle bin paths
             if '$RECYCLE.BIN' in root.upper():
                 continue
 
-            yaml_path = os.path.join(root, 'fielduploads.seabee.yaml')
-            if not os.path.exists(yaml_path):
-                with open(yaml_path, 'w', encoding='utf-8') as yf:
-                    yf.write(yaml_text)
+            # Count files directly in this folder (excluding the YAML itself)
+            nfiles = count_files_in_folder(root, yaml_filename)
+
+            # Only create/update YAML for folders that actually have content
+            if nfiles == 0:
+                continue
+
+            yaml_path = os.path.join(root, yaml_filename)
+
+            existing = safe_load_yaml(yaml_path) if os.path.exists(yaml_path) else {}
+            old_nfiles = existing.get('nfiles')
+
+            # If YAML exists and nfiles hasn't changed, do not rewrite (preserve lastupdated)
+            if os.path.exists(yaml_path) and old_nfiles == nfiles:
+                continue
+
+            # If we're writing now:
+            meta = dict(base_meta)
+            meta['nfiles'] = nfiles
+
+            # Preserve old lastupdated if present AND nfiles unchanged (handled above).
+            # Otherwise update lastupdated to now.
+            meta['lastupdated'] = now_iso
+
+            yaml_text = yaml.dump(meta, sort_keys=False, allow_unicode=True)
+            with open(yaml_path, 'w', encoding='utf-8') as yf:
+                yf.write(yaml_text)
+
 
         # Upload using rclone
         self.status_var.set("Uploading YAML config files via rclone…")
