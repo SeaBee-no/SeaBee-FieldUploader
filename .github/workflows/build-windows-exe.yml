@@ -27,10 +27,11 @@ jobs:
 
       # Build a single EXE (no rclone/conf/defaults shipped)
       - name: Build EXE with PyInstaller
+        shell: powershell
         run: |
           cd app
-          pyinstaller --noconfirm --clean --windowed ^
-            --name "SeaBee-FieldUploader" ^
+          pyinstaller --noconfirm --clean --windowed `
+            --name "SeaBee-FieldUploader" `
             app.py
 
       # Package only the EXE + a README that explains required sidecar files
