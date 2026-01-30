@@ -20,33 +20,46 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
+        shell: powershell
         run: |
           python -m pip install --upgrade pip
-          pip install -r app/requirements.txt
+          pip install -r "app/requirements.txt"
           pip install pyinstaller
 
       - name: Debug: list app files
+        shell: powershell
         run: |
-          dir
-          dir app
-          dir app\*.py
+          Get-ChildItem
+          Get-ChildItem -Path "app"
+          Get-ChildItem -Path "app/resources"
 
-      - name: Build EXE with PyInstaller
+      - name: Build EXE with PyInstaller (onefile)
+        shell: powershell
         run: |
-          pyinstaller --noconfirm --clean --windowed --name "SeaBee-FieldUploader" app\REPLACE_WITH_ENTRYPOINT.py
+          pyinstaller --noconfirm --clean --windowed --onefile `
+            --name "SeaBee-FieldUploader" `
+            --icon "app/resources/seabee.ico" `
+            "app/resources/app.py"
 
-      - name: Create portable folder
+      - name: Create release folder
+        shell: powershell
         run: |
-          mkdir dist_portable
-          copy "app\dist\SeaBee-FieldUploader\SeaBee-FieldUploader.exe" "dist_portable\SeaBee-FieldUploader.exe"
-          copy "app\README_portable.txt" "dist_portable\README_portable.txt"
+          New-Item -ItemType Directory -Force -Path "release" | Out-Null
 
-      - name: Zip portable folder
+          # onefile output goes directly into dist/
+          Copy-Item "dist/SeaBee-FieldUploader.exe" "release/SeaBee-FieldUploader.exe"
+
+          # Sidecar config files (editable, not bundled)
+          Copy-Item "app/resources/rclone.conf" "release/rclone.conf"
+          Copy-Item "app/resources/defaults.txt" "release/defaults.txt"
+
+      - name: Zip release
+        shell: powershell
         run: |
-          powershell -Command "Compress-Archive -Path dist_portable/* -DestinationPath SeaBee-FieldUploader-portable.zip -Force"
+          Compress-Archive -Path "release/*" -DestinationPath "SeaBee-FieldUploader.zip" -Force
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SeaBee-FieldUploader-portable
-          path: SeaBee-FieldUploader-portable.zip
+          name: SeaBee-FieldUploader
+          path: SeaBee-FieldUploader.zip
