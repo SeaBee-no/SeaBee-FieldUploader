@@ -31,18 +31,18 @@ jobs:
         run: |
           pyinstaller --noconfirm --clean --windowed --onefile `
             --name "SeaBee-FieldUploader" `
-            --icon "app/resources/seabee.ico" `
-            "app/resources/app.py"
+            "app/__main__.py"
 
       - name: Create release folder
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path "release" | Out-Null
+          New-Item -ItemType Directory -Force -Path "release/resources" | Out-Null
 
           Copy-Item "dist/SeaBee-FieldUploader.exe" "release/SeaBee-FieldUploader.exe"
 
-          Copy-Item "app/resources/rclone.conf.template" "release/rclone.conf.template"
-          Copy-Item "app/resources/defaults.txt" "release/defaults.txt"
+          Copy-Item "resources/rclone.conf.template" "release/resources/rclone.conf.template"
+          Copy-Item "resources/defaults.txt" "release/resources/defaults.txt"
 
       - name: Upload artifact (single zip download)
         uses: actions/upload-artifact@v4

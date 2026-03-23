@@ -1,5 +1,10 @@
-app/resources/rclone.exe
-app/resources/rclone.conf
+resources/rclone.exe
+resources/rclone.conf
+resources/rclone.conf.local
+
+# Common local placement (next to the extracted zip)
+rclone.exe
+rclone.conf
 
 # Python artifacts
 **/__pycache__/

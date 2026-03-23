@@ -1,0 +1,455 @@
+import datetime
+import os
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from tkinter import ttk
+
+import yaml
+
+APP_NAME = "SeaBee-FieldUploader"
+
+# ─── CONFIGURATION ─────────────────────────────────────────────────────────────
+REMOTE_NAME = "minio"
+BUCKET_NAME = "fielduploads"
+OBJECT_PREFIX = "seabirds/"  # Remote path inside bucket
+# ───────────────────────────────────────────────────────────────────────────────
+
+
+def safe_load_yaml(path: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def count_files_in_folder(folder_path: str, yaml_filename: str) -> int:
+    n = 0
+    try:
+        for name in os.listdir(folder_path):
+            full = os.path.join(folder_path, name)
+            if os.path.isfile(full) and name != yaml_filename:
+                if name.lower() == "thumbs.db":
+                    continue
+                n += 1
+    except Exception:
+        pass
+    return n
+
+
+def get_own_file_path(filename: str | None = None) -> str:
+    if getattr(sys, "frozen", False):
+        base_path = os.path.dirname(sys.executable)
+    else:
+        base_path = os.path.dirname(os.path.realpath(__file__))
+    return os.path.join(base_path, filename) if filename else base_path
+
+
+def get_app_root_dir() -> str:
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir))
+
+
+def get_resources_dir() -> str:
+    return os.path.join(get_app_root_dir(), "resources")
+
+
+def get_user_config_dir() -> str:
+    if sys.platform.startswith("win"):
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, APP_NAME)
+
+    base = os.environ.get("XDG_CONFIG_HOME")
+    if not base:
+        base = os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "seabee-fielduploader")
+
+
+def open_file_for_edit(path: str) -> None:
+    if sys.platform.startswith("win"):
+        os.startfile(path)  # type: ignore[attr-defined]
+        return
+    # Best-effort for mac/linux
+    try:
+        subprocess.Popen(["xdg-open", path])
+    except Exception:
+        pass
+
+
+def ensure_appdata_file(filename: str, template_filename: str | None) -> str:
+    target_dir = get_user_config_dir()
+    os.makedirs(target_dir, exist_ok=True)
+
+    target_path = os.path.join(target_dir, filename)
+    if os.path.isfile(target_path):
+        return target_path
+
+    if template_filename:
+        template_path = os.path.join(get_resources_dir(), template_filename)
+        if os.path.isfile(template_path):
+            shutil.copyfile(template_path, target_path)
+            return target_path
+
+    with open(target_path, "w", encoding="utf-8") as f:
+        f.write("")
+    return target_path
+
+
+def resolve_rclone_exe() -> str | None:
+    env_path = os.environ.get("SEABEE_RCLONE_EXE") or os.environ.get("RCLONE_EXE")
+    if env_path and os.path.isfile(env_path):
+        return env_path
+
+    local_name = "rclone.exe" if sys.platform.startswith("win") else "rclone"
+
+    # Prefer per-user app directory
+    appdata_candidate = os.path.join(get_user_config_dir(), local_name)
+    if os.path.isfile(appdata_candidate):
+        return appdata_candidate
+
+    # Next to EXE / in app root
+    app_root_candidate = os.path.join(get_app_root_dir(), local_name)
+    if os.path.isfile(app_root_candidate):
+        return app_root_candidate
+
+    which = shutil.which(local_name) or shutil.which("rclone")
+    return which
+
+
+def resolve_rclone_conf() -> str | None:
+    env_path = os.environ.get("SEABEE_RCLONE_CONFIG") or os.environ.get("RCLONE_CONFIG")
+    if env_path and os.path.isfile(env_path):
+        return env_path
+
+    candidates: list[str] = []
+
+    # Preferred: app-specific config dir
+    candidates.append(os.path.join(get_user_config_dir(), "rclone.conf"))
+
+    # Standard rclone config locations
+    if sys.platform.startswith("win"):
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            candidates.append(os.path.join(appdata, "rclone", "rclone.conf"))
+    else:
+        candidates.append(os.path.join(os.path.expanduser("~"), ".config", "rclone", "rclone.conf"))
+
+    # Legacy: next to EXE / app root
+    candidates.append(os.path.join(get_app_root_dir(), "rclone.conf"))
+
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def resolve_defaults_path() -> str:
+    # Always use per-user config path for defaults
+    return os.path.join(get_user_config_dir(), "defaults.txt")
+
+
+def parse_defaults_file(path: str) -> dict:
+    defs: dict[str, str] = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    defs[k.strip()] = v.strip()
+    except Exception:
+        pass
+    return defs
+
+
+def write_defaults_file(path: str, theme: str, organisation: str, creator_name: str, project: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("# defaults.txt\n")
+        f.write(f"theme={theme}\n")
+        f.write(f"organisation={organisation}\n")
+        f.write(f"creator_name={creator_name}\n")
+        f.write(f"project={project}\n")
+
+
+def ensure_defaults_ready() -> dict:
+    defaults_path = resolve_defaults_path()
+    if not os.path.isfile(defaults_path):
+        ensure_appdata_file("defaults.txt", "defaults.txt")
+    return parse_defaults_file(defaults_path)
+
+
+class S3UploaderApp(ttk.Frame):
+    def __init__(self, master: tk.Tk):
+        super().__init__(master, padding=15)
+        self.grid(sticky="NSEW")
+        master.title("SeaBee FieldUploader")
+        master.resizable(False, False)
+        master.maxsize(650, master.winfo_screenheight())
+
+        style = ttk.Style(master)
+        style.theme_use("clam")
+        style.configure("TLabel", font=("Segoe UI", 10))
+        style.configure("TEntry", padding=4)
+        style.configure("TButton", padding=6)
+
+        defs = ensure_defaults_ready()
+        theme_default = defs.get("theme", "Seabirds")
+        org_default = defs.get("organisation", "NINA")
+        creator_default = defs.get("creator_name", "")
+        project_default = defs.get("project", "")
+
+        self.theme_var = tk.StringVar(master=self, value=theme_default)
+        self.org_var = tk.StringVar(master=self, value=org_default)
+        self.creator_var = tk.StringVar(master=self, value=creator_default)
+        self.project_var = tk.StringVar(master=self, value=project_default)
+
+        fields = [
+            ("Theme:", self.theme_var),
+            ("Organisation:", self.org_var),
+            ("Creator name:", self.creator_var),
+            ("Project:", self.project_var),
+        ]
+        for i, (lbl, var) in enumerate(fields):
+            ttk.Label(self, text=lbl).grid(row=i, column=0, sticky="E", pady=4)
+            ttk.Entry(self, textvariable=var, width=45).grid(
+                row=i, column=1, columnspan=2, sticky="EW", pady=4
+            )
+
+        ttk.Button(self, text="Edit defaults.txt", command=self.edit_defaults).grid(
+            row=4, column=0, sticky="W", pady=(6, 0)
+        )
+        ttk.Button(self, text="Save as defaults", command=self.save_defaults).grid(
+            row=4, column=1, sticky="W", pady=(6, 0)
+        )
+        ttk.Button(self, text="Edit rclone.conf", command=self.edit_rclone_conf).grid(
+            row=4, column=2, sticky="E", pady=(6, 0)
+        )
+
+        ttk.Label(self, text="Folder to upload:").grid(row=5, column=0, sticky="E", pady=(12, 4))
+        self.folder_var = tk.StringVar(master=self)
+        ttk.Entry(self, textvariable=self.folder_var, width=45).grid(
+            row=5, column=1, sticky="EW", pady=(12, 4)
+        )
+        ttk.Button(self, text="Browse…", command=self.select_folder).grid(
+            row=5, column=2, padx=5, pady=(12, 4)
+        )
+
+        ttk.Button(self, text="Upload to S3", command=self.start_upload).grid(
+            row=6, column=1, pady=(10, 0)
+        )
+
+        self.status_var = tk.StringVar(master=self, value="Idle")
+        self.speed_var = tk.StringVar(master=self, value="")
+        self.eta_var = tk.StringVar(master=self, value="")
+
+        ttk.Label(self, textvariable=self.status_var, wraplength=620).grid(
+            row=7, column=0, columnspan=3, sticky="W", pady=(15, 2)
+        )
+        ttk.Label(self, textvariable=self.speed_var, wraplength=620).grid(
+            row=8, column=0, columnspan=3, sticky="W"
+        )
+        ttk.Label(self, textvariable=self.eta_var, wraplength=620).grid(
+            row=9, column=0, columnspan=3, sticky="W"
+        )
+
+        self.columnconfigure(1, weight=1)
+
+        self._rclone_exe: str | None = None
+        self._rclone_conf: str | None = None
+
+    def save_defaults(self) -> None:
+        defaults_path = ensure_appdata_file("defaults.txt", "defaults.txt")
+        write_defaults_file(
+            defaults_path,
+            theme=self.theme_var.get(),
+            organisation=self.org_var.get(),
+            creator_name=self.creator_var.get(),
+            project=self.project_var.get(),
+        )
+        messagebox.showinfo("Defaults saved", f"Saved defaults to:\n{defaults_path}")
+
+    def edit_defaults(self) -> None:
+        defaults_path = ensure_appdata_file("defaults.txt", "defaults.txt")
+        try:
+            open_file_for_edit(defaults_path)
+        except Exception as e:
+            messagebox.showerror("Open failed", f"Could not open defaults.txt: {e}")
+
+    def edit_rclone_conf(self) -> None:
+        conf_path = ensure_appdata_file("rclone.conf", "rclone.conf.template")
+        try:
+            open_file_for_edit(conf_path)
+        except Exception as e:
+            messagebox.showerror("Open failed", f"Could not open rclone.conf: {e}")
+
+    def select_folder(self) -> None:
+        fld = filedialog.askdirectory()
+        if fld:
+            self.folder_var.set(fld)
+
+    def ensure_rclone_ready(self) -> bool:
+        rclone_exe = resolve_rclone_exe()
+        if not rclone_exe:
+            messagebox.showerror(
+                "Missing rclone",
+                "Could not find rclone executable.\n\n"
+                "Fix one of these:\n"
+                "- Place rclone.exe next to the program\n"
+                "- Copy rclone.exe to %APPDATA%\\SeaBee-FieldUploader\\rclone.exe\n"
+                "- Put rclone on PATH\n"
+                "- Set SEABEE_RCLONE_EXE to the full path",
+            )
+            return False
+
+        rclone_conf = resolve_rclone_conf()
+        if not rclone_conf:
+            conf_path = ensure_appdata_file("rclone.conf", "rclone.conf.template")
+            try:
+                open_file_for_edit(conf_path)
+            except Exception:
+                pass
+
+            messagebox.showinfo(
+                "Edit rclone.conf",
+                "A new rclone.conf was created from the template.\n\n"
+                "Please fill in the credentials, save the file, then click Upload again.",
+            )
+            return False
+
+        self._rclone_exe = rclone_exe
+        self._rclone_conf = rclone_conf
+        return True
+
+    def start_upload(self) -> None:
+        fld = self.folder_var.get().strip()
+        if not fld or not os.path.isdir(fld):
+            messagebox.showwarning("Select Folder", "Please choose a valid folder first.")
+            return
+
+        if not self.ensure_rclone_ready():
+            return
+
+        threading.Thread(target=self.upload_folder, args=(fld,), daemon=True).start()
+
+    def run_rclone_with_progress(self, source: str, dest: str, include_yaml_only: bool = False) -> None:
+        if not self._rclone_exe or not self._rclone_conf:
+            raise RuntimeError("rclone not initialized")
+
+        command = [
+            self._rclone_exe,
+            "copy",
+            source,
+            dest,
+            "--config",
+            self._rclone_conf,
+            "--progress",
+            "--exclude",
+            "$RECYCLE.BIN/**",
+        ]
+        if include_yaml_only:
+            command += ["--include", "*.yaml"]
+
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+        assert process.stdout is not None
+        for line in process.stdout:
+            line = line.strip()
+            match = re.search(
+                r"Transferred:\s+([\d.]+\s\w+)\s*/\s*([\d.]+\s\w+),.*?([\d.]+\s\w+/s),\s*ETA\s*([\dhms]+)",
+                line,
+            )
+            if match:
+                transferred = match.group(1)
+                total = match.group(2)
+                speed = match.group(3)
+                eta = match.group(4)
+                self.speed_var.set(f"Speed: {speed}")
+                self.eta_var.set(f"ETA: {eta}")
+                self.status_var.set(f"Transferred: {transferred} / {total}")
+
+        process.wait()
+
+    def upload_folder(self, folder: str) -> None:
+        files_at_root = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
+        if files_at_root:
+            ts = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+            pkg_name = f"fielduploader_upload_{ts}"
+            pkg_path = os.path.join(folder, pkg_name)
+            os.makedirs(pkg_path, exist_ok=True)
+            for fname in files_at_root:
+                shutil.move(os.path.join(folder, fname), os.path.join(pkg_path, fname))
+
+        yaml_filename = "fielduploads.seabee.yaml"
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        base_meta = {
+            "theme": self.theme_var.get(),
+            "organisation": self.org_var.get(),
+            "creator_name": self.creator_var.get(),
+            "project": self.project_var.get(),
+        }
+
+        for root, dirs, files in os.walk(folder):
+            if os.path.abspath(root) == os.path.abspath(folder):
+                continue
+
+            if "$RECYCLE.BIN" in root.upper():
+                continue
+
+            nfiles = count_files_in_folder(root, yaml_filename)
+            if nfiles == 0:
+                continue
+
+            yaml_path = os.path.join(root, yaml_filename)
+
+            existing = safe_load_yaml(yaml_path) if os.path.exists(yaml_path) else {}
+            old_nfiles = existing.get("nfiles")
+
+            if os.path.exists(yaml_path) and old_nfiles == nfiles:
+                continue
+
+            meta = dict(base_meta)
+            meta["nfiles"] = nfiles
+            meta["lastupdated"] = now_iso
+
+            yaml_text = yaml.dump(meta, sort_keys=False, allow_unicode=True)
+            with open(yaml_path, "w", encoding="utf-8") as yf:
+                yf.write(yaml_text)
+
+        self.status_var.set("Uploading YAML config files via rclone…")
+        self.run_rclone_with_progress(
+            folder,
+            f"{REMOTE_NAME}:{BUCKET_NAME}/{OBJECT_PREFIX}",
+            include_yaml_only=True,
+        )
+
+        self.status_var.set("Uploading all files via rclone…")
+        self.run_rclone_with_progress(
+            folder,
+            f"{REMOTE_NAME}:{BUCKET_NAME}/{OBJECT_PREFIX}",
+            include_yaml_only=False,
+        )
+
+        self.status_var.set("✅ Upload complete.")
+        messagebox.showinfo("Upload Complete", "All files uploaded successfully via rclone.")
+
+
+def main() -> None:
+    root = tk.Tk()
+    S3UploaderApp(root)
+    root.mainloop()
