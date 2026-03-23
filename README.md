@@ -35,6 +35,9 @@ This is the recommended deployment method for field computers.
 On first startup, the app will auto-create these per-user config files:
 - `%APPDATA%\SeaBee-FieldUploader\rclone.conf` (from `resources/rclone.conf.template`)
 - `%APPDATA%\SeaBee-FieldUploader\defaults.txt` (from `resources/defaults.txt`)
+- `%APPDATA%\SeaBee-FieldUploader\bucket.conf` (from `resources/bucket.conf.template`)
+
+`bucket.conf` controls the upload target (`REMOTE_NAME`, `BUCKET_NAME`, `OBJECT_PREFIX`).
 
 The GUI also has buttons for editing `rclone.conf` and saving defaults.
 

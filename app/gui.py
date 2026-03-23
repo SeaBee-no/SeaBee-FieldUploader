@@ -13,11 +13,9 @@ import yaml
 
 APP_NAME = "SeaBee-FieldUploader"
 
-# ─── CONFIGURATION ─────────────────────────────────────────────────────────────
-REMOTE_NAME = "minio"
-BUCKET_NAME = "fielduploads"
-OBJECT_PREFIX = "seabirds/"  # Remote path inside bucket
-# ───────────────────────────────────────────────────────────────────────────────
+DEFAULT_REMOTE_NAME = "minio"
+DEFAULT_BUCKET_NAME = "fielduploads"
+DEFAULT_OBJECT_PREFIX = "seabirds/"  # Remote path inside bucket
 
 
 def safe_load_yaml(path: str) -> dict:
@@ -61,11 +59,15 @@ def get_resources_dir() -> str:
     return os.path.join(get_app_root_dir(), "resources")
 
 
+def get_icon_path() -> str:
+    return os.path.join(get_resources_dir(), "seabee.ico")
+
+
 DEFAULTS_TEMPLATE_TEXT = """# defaults.txt
 theme=Seabirds
 organisation=NINA
 creator_name=
-project=
+project=SEAPOP 3B - Kartlegging av hekkebestander
 """
 
 RCLONE_TEMPLATE_TEXT = """# Template rclone config for SeaBee FieldUploader
@@ -79,6 +81,16 @@ env_auth = false
 access_key_id = <ACCESS_KEY_ID>
 secret_access_key = <SECRET_ACCESS_KEY>
 endpoint = https://<MINIO_HOST>
+"""
+
+BUCKET_TEMPLATE_TEXT = f"""# bucket.conf
+# Controls where uploads go in rclone.
+#
+# Keys are case-insensitive.
+
+REMOTE_NAME={DEFAULT_REMOTE_NAME}
+BUCKET_NAME={DEFAULT_BUCKET_NAME}
+OBJECT_PREFIX={DEFAULT_OBJECT_PREFIX}
 """
 
 
@@ -123,6 +135,8 @@ def ensure_appdata_file(filename: str, template_filename: str | None) -> str:
             f.write(DEFAULTS_TEMPLATE_TEXT)
         elif filename.lower() == "rclone.conf":
             f.write(RCLONE_TEMPLATE_TEXT)
+        elif filename.lower() == "bucket.conf":
+            f.write(BUCKET_TEMPLATE_TEXT)
         else:
             f.write("")
     return target_path
@@ -132,6 +146,35 @@ def bootstrap_appdata_files() -> None:
     # Create both files on first startup to make them easy to find/edit.
     ensure_appdata_file("defaults.txt", "defaults.txt")
     ensure_appdata_file("rclone.conf", "rclone.conf.template")
+    ensure_appdata_file("bucket.conf", "bucket.conf.template")
+
+
+def parse_kv_file(path: str) -> dict[str, str]:
+    data: dict[str, str] = {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                data[k.strip().lower()] = v.strip()
+    except Exception:
+        pass
+    return data
+
+
+def load_bucket_config() -> tuple[str, str, str]:
+    path = ensure_appdata_file("bucket.conf", "bucket.conf.template")
+    cfg = parse_kv_file(path)
+    remote = cfg.get("remote_name", DEFAULT_REMOTE_NAME)
+    bucket = cfg.get("bucket_name", DEFAULT_BUCKET_NAME)
+    prefix = cfg.get("object_prefix", DEFAULT_OBJECT_PREFIX)
+    if prefix and not prefix.endswith("/"):
+        prefix = prefix + "/"
+    return remote, bucket, prefix
 
 
 def resolve_rclone_exe() -> str | None:
@@ -233,6 +276,8 @@ class S3UploaderApp(ttk.Frame):
         style.configure("TLabel", font=("Segoe UI", 10))
         style.configure("TEntry", padding=4)
         style.configure("TButton", padding=6)
+
+        self.remote_name, self.bucket_name, self.object_prefix = load_bucket_config()
 
         defs = ensure_defaults_ready()
         theme_default = defs.get("theme", "Seabirds")
@@ -466,14 +511,14 @@ class S3UploaderApp(ttk.Frame):
         self.status_var.set("Uploading YAML config files via rclone…")
         self.run_rclone_with_progress(
             folder,
-            f"{REMOTE_NAME}:{BUCKET_NAME}/{OBJECT_PREFIX}",
+            f"{self.remote_name}:{self.bucket_name}/{self.object_prefix}",
             include_yaml_only=True,
         )
 
         self.status_var.set("Uploading all files via rclone…")
         self.run_rclone_with_progress(
             folder,
-            f"{REMOTE_NAME}:{BUCKET_NAME}/{OBJECT_PREFIX}",
+            f"{self.remote_name}:{self.bucket_name}/{self.object_prefix}",
             include_yaml_only=False,
         )
 
@@ -484,5 +529,11 @@ class S3UploaderApp(ttk.Frame):
 def main() -> None:
     bootstrap_appdata_files()
     root = tk.Tk()
+    try:
+        icon_path = get_icon_path()
+        if os.path.isfile(icon_path):
+            root.iconbitmap(icon_path)
+    except Exception:
+        pass
     S3UploaderApp(root)
     root.mainloop()

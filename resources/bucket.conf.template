@@ -1,0 +1,8 @@
+# bucket.conf
+# Controls where uploads go in rclone.
+#
+# Keys are case-insensitive.
+
+REMOTE_NAME=minio
+BUCKET_NAME=fielduploads
+OBJECT_PREFIX=seabirds/
