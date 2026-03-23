@@ -9,6 +9,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import ttk
 
+import shlex
+
 import yaml
 
 APP_NAME = "SeaBee-FieldUploader"
@@ -175,6 +177,12 @@ def load_bucket_config() -> tuple[str, str, str]:
     if prefix and not prefix.endswith("/"):
         prefix = prefix + "/"
     return remote, bucket, prefix
+
+
+def format_command_for_display(argv: list[str]) -> str:
+    if sys.platform.startswith("win"):
+        return subprocess.list2cmdline(argv)
+    return shlex.join(argv)
 
 
 def resolve_rclone_exe() -> str | None:
@@ -436,6 +444,11 @@ class S3UploaderApp(ttk.Frame):
         if include_yaml_only:
             command += ["--include", "*.yaml"]
 
+        print(
+            "\n[SeaBee FieldUploader] Running rclone command:\n" + format_command_for_display(command) + "\n",
+            flush=True,
+        )
+
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
@@ -459,71 +472,84 @@ class S3UploaderApp(ttk.Frame):
                 self.eta_var.set(f"ETA: {eta}")
                 self.status_var.set(f"Transferred: {transferred} / {total}")
 
+            if os.environ.get("SEABEE_RCLONE_DEBUG"):
+                print(line, flush=True)
+
         process.wait()
 
+        if process.returncode and process.returncode != 0:
+            raise RuntimeError(f"rclone failed with exit code {process.returncode}")
+
     def upload_folder(self, folder: str) -> None:
-        files_at_root = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
-        if files_at_root:
-            ts = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-            pkg_name = f"fielduploader_upload_{ts}"
-            pkg_path = os.path.join(folder, pkg_name)
-            os.makedirs(pkg_path, exist_ok=True)
-            for fname in files_at_root:
-                shutil.move(os.path.join(folder, fname), os.path.join(pkg_path, fname))
+        try:
+            files_at_root = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
+            if files_at_root:
+                ts = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+                pkg_name = f"fielduploader_upload_{ts}"
+                pkg_path = os.path.join(folder, pkg_name)
+                os.makedirs(pkg_path, exist_ok=True)
+                for fname in files_at_root:
+                    shutil.move(os.path.join(folder, fname), os.path.join(pkg_path, fname))
 
-        yaml_filename = "fielduploads.seabee.yaml"
-        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            yaml_filename = "fielduploads.seabee.yaml"
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-        base_meta = {
-            "theme": self.theme_var.get(),
-            "organisation": self.org_var.get(),
-            "creator_name": self.creator_var.get(),
-            "project": self.project_var.get(),
-        }
+            base_meta = {
+                "theme": self.theme_var.get(),
+                "organisation": self.org_var.get(),
+                "creator_name": self.creator_var.get(),
+                "project": self.project_var.get(),
+            }
 
-        for root, dirs, files in os.walk(folder):
-            if os.path.abspath(root) == os.path.abspath(folder):
-                continue
+            for root, dirs, files in os.walk(folder):
+                if os.path.abspath(root) == os.path.abspath(folder):
+                    continue
 
-            if "$RECYCLE.BIN" in root.upper():
-                continue
+                if "$RECYCLE.BIN" in root.upper():
+                    continue
 
-            nfiles = count_files_in_folder(root, yaml_filename)
-            if nfiles == 0:
-                continue
+                nfiles = count_files_in_folder(root, yaml_filename)
+                if nfiles == 0:
+                    continue
 
-            yaml_path = os.path.join(root, yaml_filename)
+                yaml_path = os.path.join(root, yaml_filename)
 
-            existing = safe_load_yaml(yaml_path) if os.path.exists(yaml_path) else {}
-            old_nfiles = existing.get("nfiles")
+                existing = safe_load_yaml(yaml_path) if os.path.exists(yaml_path) else {}
+                old_nfiles = existing.get("nfiles")
 
-            if os.path.exists(yaml_path) and old_nfiles == nfiles:
-                continue
+                if os.path.exists(yaml_path) and old_nfiles == nfiles:
+                    continue
 
-            meta = dict(base_meta)
-            meta["nfiles"] = nfiles
-            meta["lastupdated"] = now_iso
+                meta = dict(base_meta)
+                meta["nfiles"] = nfiles
+                meta["lastupdated"] = now_iso
 
-            yaml_text = yaml.dump(meta, sort_keys=False, allow_unicode=True)
-            with open(yaml_path, "w", encoding="utf-8") as yf:
-                yf.write(yaml_text)
+                yaml_text = yaml.dump(meta, sort_keys=False, allow_unicode=True)
+                with open(yaml_path, "w", encoding="utf-8") as yf:
+                    yf.write(yaml_text)
 
-        self.status_var.set("Uploading YAML config files via rclone…")
-        self.run_rclone_with_progress(
-            folder,
-            f"{self.remote_name}:{self.bucket_name}/{self.object_prefix}",
-            include_yaml_only=True,
-        )
+            self.status_var.set("Uploading YAML config files via rclone…")
+            self.run_rclone_with_progress(
+                folder,
+                f"{self.remote_name}:{self.bucket_name}/{self.object_prefix}",
+                include_yaml_only=True,
+            )
 
-        self.status_var.set("Uploading all files via rclone…")
-        self.run_rclone_with_progress(
-            folder,
-            f"{self.remote_name}:{self.bucket_name}/{self.object_prefix}",
-            include_yaml_only=False,
-        )
+            self.status_var.set("Uploading all files via rclone…")
+            self.run_rclone_with_progress(
+                folder,
+                f"{self.remote_name}:{self.bucket_name}/{self.object_prefix}",
+                include_yaml_only=False,
+            )
 
-        self.status_var.set("✅ Upload complete.")
-        messagebox.showinfo("Upload Complete", "All files uploaded successfully via rclone.")
+            self.status_var.set("✅ Upload complete.")
+            messagebox.showinfo("Upload Complete", "All files uploaded successfully via rclone.")
+        except Exception as e:
+            self.status_var.set("❌ Upload failed.")
+            try:
+                messagebox.showerror("Upload Failed", f"Upload failed.\n\n{e}")
+            except Exception:
+                pass
 
 
 def main() -> None:
