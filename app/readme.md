@@ -2,42 +2,66 @@
 
 ## Windows Setup Guide
 
+### Option A (recommended): Run directly from GitHub using `uvx`
+
+This is the easiest way to distribute updates to fieldworkers without shipping a custom Python environment.
+
+1. **Install uv (user install, no admin needed)**
+    - Open PowerShell and run:
+       ```powershell
+       irm https://astral.sh/uv/install.ps1 | iex
+       ```
+
+2. **Download `rclone.exe`**
+    - Download from https://rclone.org/downloads/
+    - Extract `rclone.exe` somewhere you have write access.
+    - Recommended (per-user) location:
+       - `%APPDATA%\SeaBee-FieldUploader\rclone.exe`
+    - If you put it elsewhere, set:
+       - `SEABEE_RCLONE_EXE=C:\path\to\rclone.exe`
+
+3. **Generate `%APPDATA%\SeaBee-FieldUploader\rclone.conf` (credentials)**
+    - Do NOT commit credentials to git.
+   - On first run, the app will create the file from `rclone.conf.template` if it is missing.
+   - Then edit the generated file and fill in the credentials.
+   - If you want to create it manually (only needed if you cloned this repo), you can run:
+     ```powershell
+     New-Item -ItemType Directory -Force "$env:APPDATA\SeaBee-FieldUploader" | Out-Null
+     Copy-Item -Force ".\resources\rclone.conf.template" "$env:APPDATA\SeaBee-FieldUploader\rclone.conf"
+     notepad "$env:APPDATA\SeaBee-FieldUploader\rclone.conf"
+     ```
+    - The remote name must match `minio` (see `REMOTE_NAME` in the code).
+
+4. **Run the app from GitHub**
+    - Public repo example:
+       ```powershell
+       uvx --from "git+https://github.com/SeaBee-no/SeaBee-FieldUploader#subdirectory=app" seabee-fielduploader
+       ```
+    - Tip: pin to a tag for stable field deployments:
+       ```powershell
+       uvx --from "git+https://github.com/SeaBee-no/SeaBee-FieldUploader@v0.1.0#subdirectory=app" seabee-fielduploader
+       ```
+
 The software is made to work on Windows computers without admin rights.
+
+### Option B: Download zip release
 
 1. **Download the software**
    - Download the `.zip` file from https://github.com/SeaBee-no/SeaBee-FieldUploader/releases
 
 2. **Download Rclone**  
    - Obtain the latest `rclone.exe` from https://rclone.org/downloads/  
-   - Rename it to `rclone.exe` and place it in the `resources` directory.
+   - Place it next to the app as `rclone.exe` or at `%APPDATA%\SeaBee-FieldUploader\rclone.exe`.
 
 3. **Configure `rclone.conf`**  
-   - Edit `rclone.conf` to include your SeaBee MinIO credentials.
+   - On first run, the app will create `%APPDATA%\SeaBee-FieldUploader\rclone.conf` from `rclone.conf.template` if it is missing.
+   - Edit the generated file and fill in the credentials.
 
 4. **Modify Default Values**
    - Modify `defaults.txt` to change the default loaded `theme`, `organisation`, `creator_name` and `project`.
 
-5. **Install or Configure Python**
-   - **If you dont have Python installed:**
-      - Download WinPython from https://github.com/winpython/winpython/releases. Choose the latest stable `...dot.zip` file, ie. `Winpython64-3.12.10.1dot.zip`.
-      - Exctract the `WPy...` folder somewhere on your computer, ie. in the `resources` folder.
-   - **Then, with Python installed:**
-      - Open `SeaBee-FieldUpdater.bat` in a text editor and change the path for `PYTHON` to your computers `python.exe` or `python` if you have it installed on PATH.
-      - Exaples:
-         ```
-         set "PYTHON=%BASEDIR%\resources\WPy64-312101\python\python.exe"
-         ```
-         or
-         ```
-         set "PYTHON=C:\WPy64-312101\python\python.exe"
-         ```
-   - Open the `Properties` of the shortcut file, and change the paths for both `Target` and `Start in` to match the `.bat` files location.
-
-6. **Run the App in Python**  
-   ```bash
-   python app.py
-   ```
-   Select the folder you want to upload (we recommend using the root of a hard drive like `E:/`, which contains all the subfolders from the drones SD card) and press upload. Make sure the form values are correct.
+5. **Run the App**
+   - Run `SeaBee-FieldUploader.exe`.
 
 ## Behavior Notes
 - When staring an upload, root-level files are auto-organized into timestamped subfolders named `fielduploader_uploads_YYYYMMDDHHMMSS` before upload.  

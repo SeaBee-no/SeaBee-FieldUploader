@@ -1,1 +1,8 @@
 app/resources/rclone.exe
+app/resources/rclone.conf
+
+# Python artifacts
+**/__pycache__/
+*.pyc
+*.pyo
+*.egg-info/

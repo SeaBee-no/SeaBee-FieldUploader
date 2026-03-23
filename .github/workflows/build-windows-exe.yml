@@ -41,7 +41,7 @@ jobs:
 
           Copy-Item "dist/SeaBee-FieldUploader.exe" "release/SeaBee-FieldUploader.exe"
 
-          Copy-Item "app/resources/rclone.conf" "release/rclone.conf"
+          Copy-Item "app/resources/rclone.conf.template" "release/rclone.conf.template"
           Copy-Item "app/resources/defaults.txt" "release/defaults.txt"
 
       - name: Upload artifact (single zip download)

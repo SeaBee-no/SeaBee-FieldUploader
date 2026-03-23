@@ -11,6 +11,8 @@ from tkinter import ttk
 import subprocess
 import re
 
+APP_NAME = "SeaBee-FieldUploader"
+
 # ─── CONFIGURATION ─────────────────────────────────────────────────────────────
 REMOTE_NAME    = 'minio'
 BUCKET_NAME    = 'fielduploads'
@@ -51,6 +53,60 @@ def get_own_file_path(filename=None, from_parent=False):
         base_path = os.path.abspath(os.path.join(base_path, os.pardir))
 
     return os.path.join(base_path, filename) if filename else base_path
+
+def get_user_config_dir() -> str:
+    if sys.platform.startswith("win"):
+        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        return os.path.join(base, APP_NAME)
+
+    base = os.environ.get("XDG_CONFIG_HOME")
+    if not base:
+        base = os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "seabee-fielduploader")
+
+def resolve_rclone_exe() -> str | None:
+    env_path = os.environ.get("SEABEE_RCLONE_EXE") or os.environ.get("RCLONE_EXE")
+    if env_path and os.path.isfile(env_path):
+        return env_path
+
+    # App-specific config directory (convenient for field installs)
+    local_name = "rclone.exe" if sys.platform.startswith("win") else "rclone"
+    appdata_candidate = os.path.join(get_user_config_dir(), local_name)
+    if os.path.isfile(appdata_candidate):
+        return appdata_candidate
+
+    local_path = os.path.join(get_own_file_path(), local_name)
+    if os.path.isfile(local_path):
+        return local_path
+
+    which = shutil.which(local_name) or shutil.which("rclone")
+    return which
+
+def resolve_rclone_conf() -> str | None:
+    env_path = os.environ.get("SEABEE_RCLONE_CONFIG") or os.environ.get("RCLONE_CONFIG")
+    if env_path and os.path.isfile(env_path):
+        return env_path
+
+    candidates: list[str] = []
+
+    # App-specific config directory (preferred)
+    candidates.append(os.path.join(get_user_config_dir(), "rclone.conf"))
+
+    # Standard rclone config locations
+    if sys.platform.startswith("win"):
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            candidates.append(os.path.join(appdata, "rclone", "rclone.conf"))
+    else:
+        candidates.append(os.path.join(os.path.expanduser("~"), ".config", "rclone", "rclone.conf"))
+
+    # Next to the script/exe (legacy behavior)
+    candidates.append(os.path.join(get_own_file_path(), "rclone.conf"))
+
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return None
 
 def load_defaults():
     path = get_own_file_path('defaults.txt', from_parent=False)
@@ -126,6 +182,67 @@ class S3UploaderApp(ttk.Frame):
 
         self.columnconfigure(1, weight=1)
 
+        self._rclone_exe: str | None = None
+        self._rclone_conf: str | None = None
+
+    def ensure_rclone_ready(self) -> bool:
+        rclone_exe = resolve_rclone_exe()
+        if not rclone_exe:
+            messagebox.showerror(
+                "Missing rclone",
+                "Could not find rclone executable.\n\n"
+                "Fix one of these:\n"
+                "- Place rclone.exe next to the app\n"
+                "- Put rclone on PATH\n"
+                "- Set SEABEE_RCLONE_EXE to the full path",
+            )
+            return False
+
+        rclone_conf = resolve_rclone_conf()
+        if not rclone_conf:
+            target_dir = get_user_config_dir()
+            target_conf = os.path.join(target_dir, "rclone.conf")
+
+            template_conf = os.path.join(get_own_file_path(), "rclone.conf.template")
+
+            create_now = messagebox.askyesno(
+                "Missing rclone.conf",
+                "Could not find rclone.conf (credentials).\n\n"
+                f"Create a new config at:\n- {target_conf}\n\n"
+                "You will need to fill in credentials after it is created.\n\n"
+                "Create it now from the included template?",
+            )
+            if not create_now:
+                return False
+
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+                if os.path.isfile(template_conf):
+                    shutil.copyfile(template_conf, target_conf)
+                else:
+                    with open(target_conf, "w", encoding="utf-8") as f:
+                        f.write("[minio]\n")
+            except Exception as e:
+                messagebox.showerror("Config error", f"Could not create rclone.conf: {e}")
+                return False
+
+            try:
+                if sys.platform.startswith("win"):
+                    os.startfile(target_conf)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+            messagebox.showinfo(
+                "Edit rclone.conf",
+                "A new rclone.conf was created from the template.\n\n"
+                "Please fill in the credentials, save the file, then click Upload again.",
+            )
+            return False
+
+        self._rclone_exe = rclone_exe
+        self._rclone_conf = rclone_conf
+        return True
+
     def select_folder(self):
         fld = filedialog.askdirectory()
         if fld:
@@ -136,11 +253,17 @@ class S3UploaderApp(ttk.Frame):
         if not fld or not os.path.isdir(fld):
             messagebox.showwarning("Select Folder", "Please choose a valid folder first.")
             return
+
+        if not self.ensure_rclone_ready():
+            return
         threading.Thread(target=self.upload_folder, args=(fld,), daemon=True).start()
 
     def run_rclone_with_progress(self, source, dest, include_yaml_only=False):
-        rclone_exe = os.path.join(get_own_file_path(), 'rclone.exe')
-        rclone_conf = os.path.join(get_own_file_path(), 'rclone.conf')
+        if not self._rclone_exe or not self._rclone_conf:
+            raise RuntimeError("rclone not initialized")
+
+        rclone_exe = self._rclone_exe
+        rclone_conf = self._rclone_conf
 
         command = [
             rclone_exe,
@@ -257,7 +380,7 @@ class S3UploaderApp(ttk.Frame):
         messagebox.showinfo("Upload Complete", "All files uploaded successfully via rclone.")
 
 
-if __name__ == "__main__":
+def main():
     root = tk.Tk()
     try:
         root.iconbitmap(get_own_file_path('seabee.ico'))
@@ -266,3 +389,7 @@ if __name__ == "__main__":
 
     S3UploaderApp(root)
     root.mainloop()
+
+
+if __name__ == "__main__":
+    main()

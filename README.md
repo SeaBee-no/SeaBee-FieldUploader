@@ -1,35 +1,20 @@
 # SeaBee FieldUploader Project
 
 ## Overview
-The SeaBee FieldUploader project consists of a Python-based application for field computers and a suite of backend scripts that automate data ingestion and processing for the SeaBee MinIO server.
+This repository contains the SeaBee FieldUploader (Windows-friendly Tkinter GUI) for field computers.
 
-## Components
-1. **FieldUploader Application in `/app`**  
-   - Standalone Python GUI for selecting local folders and uploading content to MinIO.  
-   - Bundled with Rclone for secure, resumable transfers.
+The backend/server components that ingest and process uploads have been moved to a separate repository to keep this one clean.
 
-2. **WebUploader Application in `/server/frontend/webuploader`**
-   - Online version of the FieldUploader intended for smaller amounts of data.
-   - Will not resume failed uploads, each upload goes into its own folder `webuploader_uploads_YYYYMMDDHHIISS`.
+## Run the FieldUploader (recommended)
 
-3. **FieldUploader Admin Application in `/server/frontend/fielduploader`**
-   - Web application to manage clusters of images.
-   - You can split or merge clusters, change names and project.
-   - Clusters get marked as `Ready for Sigma`, tagging them for the automated scripts.
+If you want to run the GUI directly from this GitHub repo (without bundling Python), you can use `uvx`:
 
-4. **Backend Processing Scripts in `/server/backend`**  
-   - `scanfielduploads.py`: Detects and stores new uploaded files to the database.  
-   - `makeclusters.py`: Groups files into clusters based on time and distance.  
-   - `delivertosigma.py`: Exports accepted data to the SeaBee analytics platform.
+```powershell
+uvx --from "git+https://github.com/SeaBee-no/SeaBee-FieldUploader#subdirectory=app" seabee-fielduploader
+```
 
-   Schedule the backend scripts using cron:
-   ```
-   10 1 * * * python3 scanfielduploads.py
-   0 3 * * * python3 makeclusters.py
-   0 * * * * python3 delivertosigma.py
-   ```
+You must provide `rclone.exe` and a local `rclone.conf` (credentials). The app will create `%APPDATA%\\SeaBee-FieldUploader\\rclone.conf` from a template on first run. See `app/readme.md` for details.
 
-
-## Setup
-- Replace placeholder credentials in `credentials.py` with environment-secured variables.
-- The repository is missing `authentication.php`. Either create your own, or remove the authentication section from the frontend webpages.
+## App
+- The GUI app lives in `app/resources/app.py`.
+- Setup and fieldworker instructions are in `app/readme.md`.

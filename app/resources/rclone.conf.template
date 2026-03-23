@@ -1,0 +1,22 @@
+# Template rclone config for SeaBee FieldUploader
+#
+# IMPORTANT:
+# - Do NOT commit a real rclone.conf with credentials to git.
+# - Create a real config file at one of these locations:
+#   - %APPDATA%\\SeaBee-FieldUploader\\rclone.conf (recommended)
+#   - %APPDATA%\\rclone\\rclone.conf
+#   - Next to the app/exe as rclone.conf
+#   - Or set SEABEE_RCLONE_CONFIG / RCLONE_CONFIG
+#
+# Fill in the values below:
+
+[minio]
+type = s3
+provider = Minio
+env_auth = false
+access_key_id = <ACCESS_KEY_ID>
+secret_access_key = <SECRET_ACCESS_KEY>
+endpoint = https://<MINIO_HOST>
+# region = us-east-1
+# acl = private
+# force_path_style = true
