@@ -41,6 +41,37 @@ On first startup, the app will auto-create these per-user config files:
 
 The GUI also has buttons for editing `rclone.conf` and saving defaults.
 
+## Desktop shortcut (Windows)
+
+### Option A: Manual shortcut
+
+1. Right-click the Desktop → **New** → **Shortcut**
+2. **Location** (example):
+	- `pythonw.exe -m app`
+3. Click **Next**, name it e.g. `SeaBee FieldUploader`, then **Finish**
+4. Right-click the new shortcut → **Properties**
+	- **Start in**: set this to the folder where you downloaded/cloned SeaBee-FieldUploader
+	- **Change Icon…**: point it to `resources\seabee.ico`
+
+If `pythonw.exe` is not on PATH, replace it with your full path to Python, e.g.
+`"C:\Program Files\Python312\pythonw.exe" -m app`
+
+### Option B: Create shortcut via PowerShell
+
+Run this from the SeaBee-FieldUploader folder:
+
+`$wsh = New-Object -ComObject WScript.Shell`
+
+`$lnk = $wsh.CreateShortcut("$env:USERPROFILE\Desktop\SeaBee FieldUploader.lnk")`
+
+`$lnk.TargetPath = (Get-Command pythonw.exe).Source`
+
+`$lnk.Arguments = "-m app"`
+
+`$lnk.WorkingDirectory = (Get-Location).Path`
+
+`$lnk.Save()`
+
 ## Optional: install uv
 
 If you prefer using uv on a non-restricted computer, install it with:

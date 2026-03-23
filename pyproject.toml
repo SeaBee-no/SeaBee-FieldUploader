@@ -17,3 +17,6 @@ seabee-fielduploader = "app.gui:main"
 
 [tool.setuptools]
 packages = ["app"]
+
+[tool.setuptools.package-data]
+app = ["*.ico"]

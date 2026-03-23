@@ -10,6 +10,9 @@ from tkinter import filedialog, messagebox
 from tkinter import ttk
 
 import shlex
+import importlib.resources
+import ctypes
+import ctypes.wintypes
 
 import yaml
 
@@ -63,6 +66,103 @@ def get_resources_dir() -> str:
 
 def get_icon_path() -> str:
     return os.path.join(get_resources_dir(), "seabee.ico")
+
+
+def _try_set_windows_appusermodel_id(app_id: str) -> None:
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        shell32 = ctypes.windll.shell32
+        set_id = getattr(shell32, "SetCurrentProcessExplicitAppUserModelID", None)
+        if set_id is None:
+            return
+        set_id.argtypes = [ctypes.wintypes.LPCWSTR]
+        set_id.restype = ctypes.c_long
+        set_id(app_id)
+    except Exception as e:
+        print(f"[SeaBee FieldUploader] AppUserModelID failed: {e}", flush=True)
+
+
+def _try_set_windows_taskbar_icon(root: tk.Tk, icon_path: str) -> bool:
+    if not sys.platform.startswith("win"):
+        return False
+    try:
+        root.update_idletasks()
+        hwnd = root.winfo_id()
+        if not hwnd:
+            return False
+
+        WM_SETICON = 0x0080
+        ICON_SMALL = 0
+        ICON_BIG = 1
+
+        IMAGE_ICON = 1
+        LR_LOADFROMFILE = 0x0010
+
+        user32 = ctypes.windll.user32
+
+        LoadImageW = user32.LoadImageW
+        LoadImageW.argtypes = [
+            ctypes.wintypes.HINSTANCE,
+            ctypes.wintypes.LPCWSTR,
+            ctypes.wintypes.UINT,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.wintypes.UINT,
+        ]
+        LoadImageW.restype = ctypes.wintypes.HANDLE
+
+        SendMessageW = user32.SendMessageW
+        SendMessageW.argtypes = [
+            ctypes.wintypes.HWND,
+            ctypes.wintypes.UINT,
+            ctypes.wintypes.WPARAM,
+            ctypes.wintypes.LPARAM,
+        ]
+        SendMessageW.restype = ctypes.wintypes.LPARAM
+
+        # size=0,0 lets Windows pick the best icon size from the .ico
+        hicon = LoadImageW(None, icon_path, IMAGE_ICON, 0, 0, LR_LOADFROMFILE)
+        if not hicon:
+            return False
+
+        # Keep a reference to avoid premature cleanup; we intentionally don't DestroyIcon
+        # because Tk/Windows may still be using it.
+        if not hasattr(root, "_seabee_hicons"):
+            root._seabee_hicons = []  # type: ignore[attr-defined]
+        root._seabee_hicons.append(hicon)  # type: ignore[attr-defined]
+
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon)
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon)
+        return True
+    except Exception as e:
+        print(f"[SeaBee FieldUploader] Windows taskbar icon failed: {e}", flush=True)
+        return False
+
+
+def set_window_icon(root: tk.Tk) -> None:
+    icon_candidates: list[str] = []
+
+    # 1) Preferred for zip/EXE/source runs: top-level resources/
+    icon_candidates.append(get_icon_path())
+
+    # 2) For uvx/pip installs: package data under app/resources/
+    try:
+        icon_res = importlib.resources.files("app").joinpath("seabee.ico")
+        if icon_res.is_file():
+            with importlib.resources.as_file(icon_res) as icon_file:
+                icon_candidates.append(str(icon_file))
+    except Exception as e:
+        print(f"[SeaBee FieldUploader] Icon discovery failed: {e}", flush=True)
+
+    for path in icon_candidates:
+        try:
+            if path and os.path.isfile(path):
+                root.iconbitmap(path)
+                _try_set_windows_taskbar_icon(root, path)
+                return
+        except Exception as e:
+            print(f"[SeaBee FieldUploader] Failed to set icon from {path!r}: {e}", flush=True)
 
 
 DEFAULTS_TEMPLATE_TEXT = """# defaults.txt
@@ -554,12 +654,14 @@ class S3UploaderApp(ttk.Frame):
 
 def main() -> None:
     bootstrap_appdata_files()
+
+    # Helps Windows taskbar grouping + icon behavior when running via python/pythonw.
+    _try_set_windows_appusermodel_id("NINA.SeaBee.FieldUploader")
+
     root = tk.Tk()
-    try:
-        icon_path = get_icon_path()
-        if os.path.isfile(icon_path):
-            root.iconbitmap(icon_path)
-    except Exception:
-        pass
+    set_window_icon(root)
     S3UploaderApp(root)
+
+    # Re-apply once after the window is mapped; this often fixes taskbar icon.
+    root.after(200, lambda: set_window_icon(root))
     root.mainloop()
