@@ -61,6 +61,27 @@ def get_resources_dir() -> str:
     return os.path.join(get_app_root_dir(), "resources")
 
 
+DEFAULTS_TEMPLATE_TEXT = """# defaults.txt
+theme=Seabirds
+organisation=NINA
+creator_name=
+project=
+"""
+
+RCLONE_TEMPLATE_TEXT = """# Template rclone config for SeaBee FieldUploader
+#
+# Fill in the values below.
+
+[minio]
+type = s3
+provider = Minio
+env_auth = false
+access_key_id = <ACCESS_KEY_ID>
+secret_access_key = <SECRET_ACCESS_KEY>
+endpoint = https://<MINIO_HOST>
+"""
+
+
 def get_user_config_dir() -> str:
     if sys.platform.startswith("win"):
         base = os.environ.get("APPDATA") or os.path.expanduser("~")
@@ -98,8 +119,19 @@ def ensure_appdata_file(filename: str, template_filename: str | None) -> str:
             return target_path
 
     with open(target_path, "w", encoding="utf-8") as f:
-        f.write("")
+        if filename.lower() == "defaults.txt":
+            f.write(DEFAULTS_TEMPLATE_TEXT)
+        elif filename.lower() == "rclone.conf":
+            f.write(RCLONE_TEMPLATE_TEXT)
+        else:
+            f.write("")
     return target_path
+
+
+def bootstrap_appdata_files() -> None:
+    # Create both files on first startup to make them easy to find/edit.
+    ensure_appdata_file("defaults.txt", "defaults.txt")
+    ensure_appdata_file("rclone.conf", "rclone.conf.template")
 
 
 def resolve_rclone_exe() -> str | None:
@@ -450,6 +482,7 @@ class S3UploaderApp(ttk.Frame):
 
 
 def main() -> None:
+    bootstrap_appdata_files()
     root = tk.Tk()
     S3UploaderApp(root)
     root.mainloop()

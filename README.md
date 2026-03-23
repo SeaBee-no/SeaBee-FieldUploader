@@ -32,7 +32,7 @@ This is the recommended deployment method for field computers.
 	  python -m app
 	  ```
 
-On first run/upload, the app will auto-create these per-user config files:
+On first startup, the app will auto-create these per-user config files:
 - `%APPDATA%\SeaBee-FieldUploader\rclone.conf` (from `resources/rclone.conf.template`)
 - `%APPDATA%\SeaBee-FieldUploader\defaults.txt` (from `resources/defaults.txt`)
 
@@ -45,4 +45,10 @@ If you prefer using uv on a non-restricted computer, install it with:
 ```powershell
 # On Windows.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Then you can run directly from GitHub:
+
+```powershell
+uvx --from "git+https://github.com/SeaBee-no/SeaBee-FieldUploader" seabee-fielduploader
 ```
