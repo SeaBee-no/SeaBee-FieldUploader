@@ -1,6 +1,6 @@
 # SeaBee FieldUploader
 
-Tkinter GUI for uploading field data to MinIO/S3 via rclone. Fully portable — no admin rights needed.
+The Tkinter GUI enables uploading drone field data to MinIO/S3 storage via rclone without requiring admin rights. Users typically upload drone data during SEAPOP 3B field campaigns directly to the SeaBee MinIO storage. Processed results appear on  [GeoNode](https://geonode.seabee.sigma2.no/catalogue) after further processing.
 
 ## Quick start
 
