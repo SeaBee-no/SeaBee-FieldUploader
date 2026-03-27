@@ -44,7 +44,7 @@ jobs:
           Copy-Item "resources/rclone.conf.template" "release/resources/rclone.conf.template"
           Copy-Item "resources/defaults.txt" "release/resources/defaults.txt"
           Copy-Item "resources/bucket.conf.template" "release/resources/bucket.conf.template"
-          Copy-Item "resources/seabee.ico" "release/resources/seabee.ico"
+          Copy-Item "app/seabee.ico" "release/resources/seabee.ico"
 
       - name: Upload artifact (single zip download)
         uses: actions/upload-artifact@v4

@@ -9,6 +9,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import ttk
 
+import time
+
 import shlex
 import importlib.resources
 import ctypes
@@ -17,6 +19,51 @@ import ctypes.wintypes
 import yaml
 
 APP_NAME = "SeaBee-FieldUploader"
+
+
+def _safe_makedirs(path: str) -> bool:
+    try:
+        os.makedirs(path, exist_ok=True)
+        return True
+    except Exception:
+        return False
+
+
+def _debug_log_path() -> str | None:
+    # Best-effort: write to the per-user config dir. If that fails, fall back to temp.
+    try:
+        cfg_dir = get_user_config_dir()
+        if _safe_makedirs(cfg_dir):
+            return os.path.join(cfg_dir, "debug.log")
+    except Exception:
+        pass
+
+    try:
+        tmp = os.environ.get("TEMP") or os.environ.get("TMP")
+        if tmp and _safe_makedirs(tmp):
+            return os.path.join(tmp, "seabee-fielduploader-debug.log")
+    except Exception:
+        pass
+
+    return None
+
+
+def log_debug(message: str) -> None:
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{ts}] {message}"
+    try:
+        print(line, flush=True)
+    except Exception:
+        pass
+
+    path = _debug_log_path()
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
 
 DEFAULT_REMOTE_NAME = "minio"
 DEFAULT_BUCKET_NAME = "fielduploads"
@@ -66,6 +113,11 @@ def get_resources_dir() -> str:
 
 def get_icon_path() -> str:
     return os.path.join(get_resources_dir(), "seabee.ico")
+
+
+def get_legacy_or_app_icon_path() -> str:
+    # Current repo layout: app/seabee.ico
+    return os.path.join(get_app_root_dir(), "app", "seabee.ico")
 
 
 def _try_set_windows_appusermodel_id(app_id: str) -> None:
@@ -143,17 +195,20 @@ def _try_set_windows_taskbar_icon(root: tk.Tk, icon_path: str) -> bool:
 def set_window_icon(root: tk.Tk) -> None:
     icon_candidates: list[str] = []
 
-    # 1) Preferred for zip/EXE/source runs: top-level resources/
+    # 1) Legacy/zip/source runs: top-level resources/ (older layout)
     icon_candidates.append(get_icon_path())
 
-    # 2) For uvx/pip installs: package data under app/resources/
+    # 2) Current repo layout: app/seabee.ico
+    icon_candidates.append(get_legacy_or_app_icon_path())
+
+    # 3) For uvx/pip installs: package data under the app package
     try:
         icon_res = importlib.resources.files("app").joinpath("seabee.ico")
         if icon_res.is_file():
             with importlib.resources.as_file(icon_res) as icon_file:
                 icon_candidates.append(str(icon_file))
     except Exception as e:
-        print(f"[SeaBee FieldUploader] Icon discovery failed: {e}", flush=True)
+        log_debug(f"Icon discovery failed: {e}")
 
     for path in icon_candidates:
         try:
@@ -162,7 +217,7 @@ def set_window_icon(root: tk.Tk) -> None:
                 _try_set_windows_taskbar_icon(root, path)
                 return
         except Exception as e:
-            print(f"[SeaBee FieldUploader] Failed to set icon from {path!r}: {e}", flush=True)
+            log_debug(f"Failed to set icon from {path!r}: {e}")
 
 
 DEFAULTS_TEMPLATE_TEXT = """# defaults.txt
@@ -198,7 +253,10 @@ OBJECT_PREFIX={DEFAULT_OBJECT_PREFIX}
 
 def get_user_config_dir() -> str:
     if sys.platform.startswith("win"):
-        base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        base = os.environ.get("APPDATA")
+        if not base:
+            userprofile = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+            base = os.path.join(userprofile, "AppData", "Roaming")
         return os.path.join(base, APP_NAME)
 
     base = os.environ.get("XDG_CONFIG_HOME")
@@ -220,35 +278,75 @@ def open_file_for_edit(path: str) -> None:
 
 def ensure_appdata_file(filename: str, template_filename: str | None) -> str:
     target_dir = get_user_config_dir()
-    os.makedirs(target_dir, exist_ok=True)
+    _safe_makedirs(target_dir)
 
     target_path = os.path.join(target_dir, filename)
     if os.path.isfile(target_path):
+        log_debug(f"Config exists: {target_path}")
         return target_path
 
     if template_filename:
         template_path = os.path.join(get_resources_dir(), template_filename)
         if os.path.isfile(template_path):
-            shutil.copyfile(template_path, target_path)
-            return target_path
+            try:
+                shutil.copyfile(template_path, target_path)
+                log_debug(f"Config created from template: {target_path} (template={template_path})")
+                return target_path
+            except Exception as e:
+                log_debug(f"Failed copying template to {target_path}: {e}")
 
-    with open(target_path, "w", encoding="utf-8") as f:
-        if filename.lower() == "defaults.txt":
-            f.write(DEFAULTS_TEMPLATE_TEXT)
-        elif filename.lower() == "rclone.conf":
-            f.write(RCLONE_TEMPLATE_TEXT)
-        elif filename.lower() == "bucket.conf":
-            f.write(BUCKET_TEMPLATE_TEXT)
-        else:
-            f.write("")
+    try:
+        with open(target_path, "w", encoding="utf-8") as f:
+            if filename.lower() == "defaults.txt":
+                f.write(DEFAULTS_TEMPLATE_TEXT)
+            elif filename.lower() == "rclone.conf":
+                f.write(RCLONE_TEMPLATE_TEXT)
+            elif filename.lower() == "bucket.conf":
+                f.write(BUCKET_TEMPLATE_TEXT)
+            else:
+                f.write("")
+        log_debug(f"Config created (embedded template): {target_path}")
+    except Exception as e:
+        log_debug(f"Failed writing {target_path}: {e}")
     return target_path
 
 
 def bootstrap_appdata_files() -> None:
-    # Create both files on first startup to make them easy to find/edit.
+    log_debug("Bootstrapping per-user config files")
+    log_debug(f"APPDATA={os.environ.get('APPDATA')!r} USERPROFILE={os.environ.get('USERPROFILE')!r}")
+    log_debug(f"User config dir: {get_user_config_dir()}")
+    log_debug(f"App root dir: {get_app_root_dir()}")
+    log_debug(f"Resources dir: {get_resources_dir()}")
+
+    # Create files on first startup to make them easy to find/edit.
     ensure_appdata_file("defaults.txt", "defaults.txt")
     ensure_appdata_file("rclone.conf", "rclone.conf.template")
     ensure_appdata_file("bucket.conf", "bucket.conf.template")
+
+
+def write_diagnostics_snapshot() -> None:
+    cfg_dir = get_user_config_dir()
+    log_debug("--- Diagnostics snapshot ---")
+    log_debug(f"cwd={os.getcwd()}")
+    log_debug(f"sys.executable={sys.executable}")
+    log_debug(f"frozen={getattr(sys, 'frozen', False)}")
+    for name in ["defaults.txt", "rclone.conf", "bucket.conf"]:
+        p = os.path.join(cfg_dir, name)
+        try:
+            exists = os.path.isfile(p)
+            size = os.path.getsize(p) if exists else 0
+            log_debug(f"file {name}: exists={exists} path={p} size={size}")
+        except Exception as e:
+            log_debug(f"file {name}: error checking {p}: {e}")
+
+    try:
+        if os.path.isdir(cfg_dir):
+            items = sorted(os.listdir(cfg_dir))
+            log_debug(f"config dir listing ({cfg_dir}): {items}")
+        else:
+            log_debug(f"config dir missing: {cfg_dir}")
+    except Exception as e:
+        log_debug(f"config dir listing failed: {e}")
 
 
 def parse_kv_file(path: str) -> dict[str, str]:
@@ -654,6 +752,7 @@ class S3UploaderApp(ttk.Frame):
 
 def main() -> None:
     bootstrap_appdata_files()
+    write_diagnostics_snapshot()
 
     # Helps Windows taskbar grouping + icon behavior when running via python/pythonw.
     _try_set_windows_appusermodel_id("NINA.SeaBee.FieldUploader")

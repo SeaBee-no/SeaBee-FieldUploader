@@ -5,16 +5,39 @@ This repository contains the SeaBee FieldUploader (Windows-friendly Tkinter GUI)
 
 The backend/server components that ingest and process uploads have been moved to a separate repository to keep this one clean.
 
+## Running thrugh UV
+
+This method will not work on a NINA laptop, but if you have a non-restricted computer, this method is prefered. Install UV through:
+
+```powershell
+# On Windows.
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Then install Rclone:
+```powershell
+winget install Rclone.Rclone
+```
+
+Then you can run directly from GitHub:
+
+```powershell
+uvx --from "git+https://github.com/SeaBee-no/SeaBee-FieldUploader" seabee-fielduploader
+```
+
 ## Windows setup (zip + Python)
 
-This is the recommended deployment method for field computers.
+An alternative method is downloading the source code and running locally. This is the method for NINA restriced computers.
 
 1. Download the `.zip` from the GitHub Releases page.
 
 2. Install Python (3.10+).
 	- If you don't have admin rights, use a portable Python distribution (e.g. WinPython) and point to its `python.exe`.
 
-3. Download `rclone.exe`
+3. Download/Install Rclone
+	Either:
+	- 
+	Or:
 	- Download from https://rclone.org/downloads/
 	- Place it either:
 	  - Next to the program files, OR
@@ -39,50 +62,18 @@ On first startup, the app will auto-create these per-user config files:
 
 `bucket.conf` controls the upload target (`REMOTE_NAME`, `BUCKET_NAME`, `OBJECT_PREFIX`).
 
-The GUI also has buttons for editing `rclone.conf` and saving defaults.
+The GUI also has buttons for editing `rclone.conf` and `defaults.txt`.
 
 ## Desktop shortcut (Windows)
 
-### Option A: Manual shortcut
-
 1. Right-click the Desktop → **New** → **Shortcut**
 2. **Location** (example):
-	- `pythonw.exe -m app`
+	- `cd "C:/Users/sindre.molvarsmyr/OneDrive - NINA/GitHub/SeaBee-FieldUploader"; "C:/Program Files/Python312/python.exe" -m app`
 3. Click **Next**, name it e.g. `SeaBee FieldUploader`, then **Finish**
 4. Right-click the new shortcut → **Properties**
 	- **Start in**: set this to the folder where you downloaded/cloned SeaBee-FieldUploader
-	- **Change Icon…**: point it to `resources\seabee.ico`
+	- **Change Icon…**: point it to `app\seabee.ico`
 
 If `pythonw.exe` is not on PATH, replace it with your full path to Python, e.g.
 `"C:\Program Files\Python312\pythonw.exe" -m app`
 
-### Option B: Create shortcut via PowerShell
-
-Run this from the SeaBee-FieldUploader folder:
-
-`$wsh = New-Object -ComObject WScript.Shell`
-
-`$lnk = $wsh.CreateShortcut("$env:USERPROFILE\Desktop\SeaBee FieldUploader.lnk")`
-
-`$lnk.TargetPath = (Get-Command pythonw.exe).Source`
-
-`$lnk.Arguments = "-m app"`
-
-`$lnk.WorkingDirectory = (Get-Location).Path`
-
-`$lnk.Save()`
-
-## Optional: install uv
-
-If you prefer using uv on a non-restricted computer, install it with:
-
-```powershell
-# On Windows.
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-Then you can run directly from GitHub:
-
-```powershell
-uvx --from "git+https://github.com/SeaBee-no/SeaBee-FieldUploader" seabee-fielduploader
-```
