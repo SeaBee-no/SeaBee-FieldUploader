@@ -31,6 +31,39 @@ chmod +x setup.sh run.sh
 
 If your system Python already has tkinter, `setup.sh` creates a lightweight venv. If tkinter is missing (or Python is not installed), it downloads a portable Python build that includes everything.
 
+## Usage
+
+1. Plug in the hard drive and the SD card.
+2. Copy **everything** from the SD card's `DCIM` folder to the **root** of the hard drive.
+	 - No need to create folders or rearrange anything.
+	 - Example end state:
+
+		 ```
+		 D:/
+		 ├── DJI_202505121518_003_Revlingen_MT
+		 ├── DJI_202505261112_001_Create-Area-Route12
+		 ├── DJI_202505261314_002_FleinvaerFroya
+		 ├── DJI_202505271307_003_Kjoeroeya
+		 ├── DJI_202505271307_004_Create-Area-Route13
+		 ├── DJI_202505271502_005_Enholmen
+		 ├── fielduploader_upload_20260322184312
+		 ├── fielduploader_upload_20260323175654
+		 ├── DJI_0043.JPG
+		 ├── DJI_0044.JPG
+		 ├── DJI_0045.JPG
+		 └── DJI_0046.JPG
+		 ```
+
+3. If you have images/files directly in the root (like `DJI_0043.JPG` above), leave them there.
+	- The app will move these into a timestamped folder before upload: `fielduploader_upload_YYYYMMDDHHMMSS`.
+4. In the app, select the hard drive root (e.g. `D:/`) as the upload location.
+5. Start the upload and wait.
+	- If the upload fails or stops, restart it and choose the same upload location again.
+
+![SeaBee FieldUploader - select upload folder](images/fielduploader.png)
+
+
+
 ## What setup does
 
 | Step | Windows (`setup.bat`) | Linux/Mac (`setup.sh`) |
@@ -42,28 +75,6 @@ If your system Python already has tkinter, `setup.sh` creates a lightweight venv
 
 Everything lives inside the repo folder. Nothing is installed system-wide.
 
-## Folder structure
-
-```
-SeaBee-FieldUploader/
-├── app/                   # Python source code
-│   ├── gui.py             # Main application
-│   ├── seabee.ico         # Window icon
-│   ├── __init__.py
-│   └── __main__.py
-├── configs/               # YOUR config files (gitignored)
-│   ├── rclone.conf        # ← Edit this with S3 credentials
-│   ├── defaults.txt       # Default form values
-│   └── bucket.conf        # Upload target (bucket, prefix)
-├── resources/             # Templates (committed to git)
-│   ├── rclone.conf.template
-│   ├── defaults.txt
-│   └── bucket.conf.template
-├── runtime/               # Downloaded Python + rclone (gitignored)
-├── setup.bat / setup.sh   # One-time setup
-├── run.bat / run.sh       # Launch the app
-└── readme.md
-```
 
 ## Config files
 
@@ -73,7 +84,7 @@ All config files are in the `configs/` folder next to the app.
 |------|---------|
 | `rclone.conf` | S3/MinIO credentials. **You must edit this.** |
 | `defaults.txt` | Default values for theme, organisation, creator, project. |
-| `bucket.conf` | Upload target: `REMOTE_NAME`, `BUCKET_NAME`, `OBJECT_PREFIX`. |
+| `bucket.conf` | Upload target: `REMOTE_NAME`, `BUCKET_NAME`, `OBJECT_PREFIX`. Leave alone unless you know what you are doing. |
 
 The GUI has an **"Open config folder"** button that opens `configs/` in your file manager.
 
