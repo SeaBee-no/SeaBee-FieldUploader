@@ -30,6 +30,15 @@ def _safe_makedirs(path: str) -> bool:
 
 
 def _debug_log_path() -> str | None:
+    # Easy-to-find location for field debugging.
+    if sys.platform.startswith("win"):
+        try:
+            c_log_dir = os.path.join("C:\\", "log", APP_NAME)
+            if _safe_makedirs(c_log_dir):
+                return os.path.join(c_log_dir, "debug.log")
+        except Exception:
+            pass
+
     # Best-effort: write to the per-user config dir. If that fails, fall back to temp.
     try:
         cfg_dir = get_user_config_dir()
@@ -328,8 +337,22 @@ def write_diagnostics_snapshot() -> None:
     cfg_dir = get_user_config_dir()
     log_debug("--- Diagnostics snapshot ---")
     log_debug(f"cwd={os.getcwd()}")
+    log_debug(f"os.name={os.name} sys.platform={sys.platform}")
+    log_debug(f"sys.version={sys.version.replace(os.linesep, ' ')}")
     log_debug(f"sys.executable={sys.executable}")
     log_debug(f"frozen={getattr(sys, 'frozen', False)}")
+    log_debug(
+        "env "
+        + " ".join(
+            [
+                f"APPDATA={os.environ.get('APPDATA')!r}",
+                f"LOCALAPPDATA={os.environ.get('LOCALAPPDATA')!r}",
+                f"USERPROFILE={os.environ.get('USERPROFILE')!r}",
+                f"XDG_CONFIG_HOME={os.environ.get('XDG_CONFIG_HOME')!r}",
+            ]
+        )
+    )
+    log_debug(f"get_user_config_dir()={cfg_dir}")
     for name in ["defaults.txt", "rclone.conf", "bucket.conf"]:
         p = os.path.join(cfg_dir, name)
         try:
@@ -453,13 +476,23 @@ def parse_defaults_file(path: str) -> dict:
 
 
 def write_defaults_file(path: str, theme: str, organisation: str, creator_name: str, project: str) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("# defaults.txt\n")
-        f.write(f"theme={theme}\n")
-        f.write(f"organisation={organisation}\n")
-        f.write(f"creator_name={creator_name}\n")
-        f.write(f"project={project}\n")
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("# defaults.txt\n")
+            f.write(f"theme={theme}\n")
+            f.write(f"organisation={organisation}\n")
+            f.write(f"creator_name={creator_name}\n")
+            f.write(f"project={project}\n")
+        try:
+            exists = os.path.isfile(path)
+            size = os.path.getsize(path) if exists else 0
+            log_debug(f"defaults write ok: path={path} exists={exists} size={size}")
+        except Exception as e:
+            log_debug(f"defaults write ok but stat failed: path={path} err={e}")
+    except Exception as e:
+        log_debug(f"defaults write FAILED: path={path} err={e}")
+        raise
 
 
 def ensure_defaults_ready() -> dict:
@@ -751,6 +784,8 @@ class S3UploaderApp(ttk.Frame):
 
 
 def main() -> None:
+    # Establish log destination early; helps when config resolution is broken.
+    log_debug(f"debug log path: {_debug_log_path()!r}")
     bootstrap_appdata_files()
     write_diagnostics_snapshot()
 
