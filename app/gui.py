@@ -21,6 +21,77 @@ import yaml
 APP_NAME = "SeaBee-FieldUploader"
 
 
+def _is_windows_store_python_roaming(path: str | None) -> bool:
+    if not path:
+        return False
+    p = path.replace("/", "\\").lower()
+    return "\\appdata\\local\\packages\\" in p and "\\localcache\\roaming" in p
+
+
+def _get_windows_real_roaming_base() -> str:
+    userprofile = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+    return os.path.join(userprofile, "AppData", "Roaming")
+
+
+def _get_windows_env_roaming_base() -> str:
+    base = os.environ.get("APPDATA")
+    if base:
+        return base
+    return _get_windows_real_roaming_base()
+
+
+def _get_user_config_dir_windows() -> str:
+    # Allow explicit override (useful for debugging / locked-down environments).
+    override = os.environ.get("SEABEE_CONFIG_DIR")
+    if override:
+        return override
+
+    env_base = _get_windows_env_roaming_base()
+
+    # Microsoft Store Python often redirects APPDATA to a per-package LocalCache\Roaming.
+    # Prefer the real profile roaming folder in that case, so config is visible and stable.
+    if _is_windows_store_python_roaming(env_base):
+        return os.path.join(_get_windows_real_roaming_base(), APP_NAME)
+
+    return os.path.join(env_base, APP_NAME)
+
+
+def _migrate_config_dir_if_needed() -> None:
+    if not sys.platform.startswith("win"):
+        return
+
+    # Old (Store redirected) path is derived from env APPDATA.
+    old_base = os.environ.get("APPDATA")
+    if not _is_windows_store_python_roaming(old_base):
+        return
+
+    old_dir = os.path.join(old_base or "", APP_NAME)
+    new_dir = os.path.join(_get_windows_real_roaming_base(), APP_NAME)
+    if os.path.normcase(old_dir) == os.path.normcase(new_dir):
+        return
+
+    if not os.path.isdir(old_dir):
+        return
+
+    if not _safe_makedirs(new_dir):
+        log_debug(f"Config migration skipped: cannot create {new_dir}")
+        return
+
+    log_debug(f"Config migration: old={old_dir} new={new_dir}")
+    for name in ["defaults.txt", "rclone.conf", "bucket.conf", "rclone.exe"]:
+        src = os.path.join(old_dir, name)
+        dst = os.path.join(new_dir, name)
+        try:
+            if not os.path.isfile(src):
+                continue
+            if os.path.isfile(dst):
+                continue
+            shutil.copyfile(src, dst)
+            log_debug(f"Migrated {name}: {src} -> {dst}")
+        except Exception as e:
+            log_debug(f"Migration failed for {name}: {e}")
+
+
 def _safe_makedirs(path: str) -> bool:
     try:
         os.makedirs(path, exist_ok=True)
@@ -262,11 +333,7 @@ OBJECT_PREFIX={DEFAULT_OBJECT_PREFIX}
 
 def get_user_config_dir() -> str:
     if sys.platform.startswith("win"):
-        base = os.environ.get("APPDATA")
-        if not base:
-            userprofile = os.environ.get("USERPROFILE") or os.path.expanduser("~")
-            base = os.path.join(userprofile, "AppData", "Roaming")
-        return os.path.join(base, APP_NAME)
+        return _get_user_config_dir_windows()
 
     base = os.environ.get("XDG_CONFIG_HOME")
     if not base:
@@ -321,8 +388,12 @@ def ensure_appdata_file(filename: str, template_filename: str | None) -> str:
 
 
 def bootstrap_appdata_files() -> None:
+    _migrate_config_dir_if_needed()
     log_debug("Bootstrapping per-user config files")
     log_debug(f"APPDATA={os.environ.get('APPDATA')!r} USERPROFILE={os.environ.get('USERPROFILE')!r}")
+    if sys.platform.startswith("win"):
+        log_debug(f"windows env roaming base: {_get_windows_env_roaming_base()}")
+        log_debug(f"windows real roaming base: {_get_windows_real_roaming_base()}")
     log_debug(f"User config dir: {get_user_config_dir()}")
     log_debug(f"App root dir: {get_app_root_dir()}")
     log_debug(f"Resources dir: {get_resources_dir()}")
