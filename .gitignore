@@ -1,8 +1,13 @@
+# Downloaded runtime (Python + rclone) — set up by setup.bat / setup.sh
+runtime/
+
+# User config files (contain credentials)
+configs/
+
+# Legacy placements
 resources/rclone.exe
 resources/rclone.conf
 resources/rclone.conf.local
-
-# Common local placement (next to the extracted zip)
 rclone.exe
 rclone.conf
 
