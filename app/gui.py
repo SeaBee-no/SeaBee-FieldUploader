@@ -21,6 +21,25 @@ import yaml
 APP_NAME = "SeaBee-FieldUploader"
 
 
+def _is_windows_store_python() -> bool:
+    if not sys.platform.startswith("win"):
+        return False
+    exe = (sys.executable or "").replace("/", "\\").lower()
+    return (
+        "\\windowsapps\\" in exe
+        or "pythonsoftwarefoundation.python" in exe
+        or "\\appdata\\local\\packages\\pythonsoftwarefoundation.python" in exe
+    )
+
+
+def _get_windows_log_base() -> str:
+    return os.path.join("C:\\", "log", APP_NAME)
+
+
+def _get_windows_log_config_dir() -> str:
+    return os.path.join(_get_windows_log_base(), "config")
+
+
 def _is_windows_store_python_roaming(path: str | None) -> bool:
     if not path:
         return False
@@ -46,6 +65,11 @@ def _get_user_config_dir_windows() -> str:
     if override:
         return override
 
+    # Microsoft Store Python can silently redirect writes to Roaming into LocalCache.
+    # Use a non-virtualized location instead.
+    if _is_windows_store_python():
+        return _get_windows_log_config_dir()
+
     env_base = _get_windows_env_roaming_base()
 
     # Microsoft Store Python often redirects APPDATA to a per-package LocalCache\Roaming.
@@ -60,36 +84,60 @@ def _migrate_config_dir_if_needed() -> None:
     if not sys.platform.startswith("win"):
         return
 
-    # Old (Store redirected) path is derived from env APPDATA.
-    old_base = os.environ.get("APPDATA")
-    if not _is_windows_store_python_roaming(old_base):
+    if not _is_windows_store_python():
         return
 
-    old_dir = os.path.join(old_base or "", APP_NAME)
-    new_dir = os.path.join(_get_windows_real_roaming_base(), APP_NAME)
-    if os.path.normcase(old_dir) == os.path.normcase(new_dir):
-        return
-
-    if not os.path.isdir(old_dir):
-        return
-
+    new_dir = get_user_config_dir()
     if not _safe_makedirs(new_dir):
         log_debug(f"Config migration skipped: cannot create {new_dir}")
         return
 
-    log_debug(f"Config migration: old={old_dir} new={new_dir}")
-    for name in ["defaults.txt", "rclone.conf", "bucket.conf", "rclone.exe"]:
-        src = os.path.join(old_dir, name)
-        dst = os.path.join(new_dir, name)
-        try:
-            if not os.path.isfile(src):
-                continue
-            if os.path.isfile(dst):
-                continue
-            shutil.copyfile(src, dst)
-            log_debug(f"Migrated {name}: {src} -> {dst}")
-        except Exception as e:
-            log_debug(f"Migration failed for {name}: {e}")
+    candidates: list[str] = []
+
+    # Candidate 1: whatever APPDATA points to
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        candidates.append(os.path.join(appdata, APP_NAME))
+
+    # Candidate 2: Store package LocalCache\Roaming
+    try:
+        localappdata = os.environ.get("LOCALAPPDATA")
+        if localappdata:
+            packages_dir = os.path.join(localappdata, "Packages")
+            if os.path.isdir(packages_dir):
+                for entry in os.listdir(packages_dir):
+                    if not entry.lower().startswith("pythonsoftwarefoundation.python"):
+                        continue
+                    candidates.append(os.path.join(packages_dir, entry, "LocalCache", "Roaming", APP_NAME))
+    except Exception as e:
+        log_debug(f"Migration scan failed: {e}")
+
+    # Deduplicate
+    seen: set[str] = set()
+    unique_candidates: list[str] = []
+    for c in candidates:
+        key = os.path.normcase(os.path.abspath(c))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_candidates.append(c)
+
+    for old_dir in unique_candidates:
+        if not os.path.isdir(old_dir):
+            continue
+        log_debug(f"Config migration: old={old_dir} new={new_dir}")
+        for name in ["defaults.txt", "rclone.conf", "bucket.conf", "rclone.exe"]:
+            src = os.path.join(old_dir, name)
+            dst = os.path.join(new_dir, name)
+            try:
+                if not os.path.isfile(src):
+                    continue
+                if os.path.isfile(dst):
+                    continue
+                shutil.copyfile(src, dst)
+                log_debug(f"Migrated {name}: {src} -> {dst}")
+            except Exception as e:
+                log_debug(f"Migration failed for {name}: {e}")
 
 
 def _safe_makedirs(path: str) -> bool:
@@ -104,7 +152,7 @@ def _debug_log_path() -> str | None:
     # Easy-to-find location for field debugging.
     if sys.platform.startswith("win"):
         try:
-            c_log_dir = os.path.join("C:\\", "log", APP_NAME)
+            c_log_dir = _get_windows_log_base()
             if _safe_makedirs(c_log_dir):
                 return os.path.join(c_log_dir, "debug.log")
         except Exception:
@@ -392,8 +440,10 @@ def bootstrap_appdata_files() -> None:
     log_debug("Bootstrapping per-user config files")
     log_debug(f"APPDATA={os.environ.get('APPDATA')!r} USERPROFILE={os.environ.get('USERPROFILE')!r}")
     if sys.platform.startswith("win"):
+        log_debug(f"windows store python: {_is_windows_store_python()}")
         log_debug(f"windows env roaming base: {_get_windows_env_roaming_base()}")
         log_debug(f"windows real roaming base: {_get_windows_real_roaming_base()}")
+        log_debug(f"windows log config dir: {_get_windows_log_config_dir()}")
     log_debug(f"User config dir: {get_user_config_dir()}")
     log_debug(f"App root dir: {get_app_root_dir()}")
     log_debug(f"Resources dir: {get_resources_dir()}")
