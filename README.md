@@ -11,7 +11,7 @@ Tkinter GUI for uploading field data to MinIO/S3 via rclone. Fully portable — 
 3. Edit **`configs\rclone.conf`** with your S3 credentials.
 4. Double-click **`run.bat`** to launch the app.
 
-## Desktop shortcut (Windows)
+#### Desktop shortcut (Windows)
 
 1. Right-click Desktop → **New** → **Shortcut**
 2. Location: browse to `run.bat`
