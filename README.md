@@ -11,6 +11,13 @@ Tkinter GUI for uploading field data to MinIO/S3 via rclone. Fully portable — 
 3. Edit **`configs\rclone.conf`** with your S3 credentials.
 4. Double-click **`run.bat`** to launch the app.
 
+## Desktop shortcut (Windows)
+
+1. Right-click Desktop → **New** → **Shortcut**
+2. Location: browse to `run.bat`
+3. Name it `SeaBee FieldUploader`
+4. Right-click → **Properties** → **Change Icon…** → point to `app\seabee.ico`
+
 ### Linux / macOS
 
 ```bash
@@ -88,11 +95,3 @@ PYTHONPATH=. runtime/venv/bin/python3 -m app
 Set `SEABEE_RCLONE_DEBUG=1` to see full rclone output.
 
 A debug log is written to `configs/debug.log`.
-
-## Desktop shortcut (Windows)
-
-1. Right-click Desktop → **New** → **Shortcut**
-2. Location: browse to `run.bat`
-3. Name it `SeaBee FieldUploader`
-4. Right-click → **Properties** → **Change Icon…** → point to `app\seabee.ico`
-

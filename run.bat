@@ -8,4 +8,8 @@ if not exist "runtime\python\python.exe" (
 )
 
 set "PYTHONPATH=%~dp0"
-start "" "%~dp0runtime\python\pythonw.exe" -m app
+if exist "%~dp0runtime\python\pythonw.exe" (
+    start "" "%~dp0runtime\python\pythonw.exe" -m app
+) else (
+    start "" "%~dp0runtime\python\python.exe" -m app
+)

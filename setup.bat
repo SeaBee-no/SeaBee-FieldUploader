@@ -14,15 +14,16 @@ if not exist "runtime" mkdir runtime
 if not exist "configs" mkdir configs
 
 :: -------------------------------------------------------
-:: Python (embedded, no admin needed)
+:: Python (standalone build — includes tkinter + pip)
 :: -------------------------------------------------------
 if exist "runtime\python\python.exe" (
     echo [OK] Python already installed.
     goto :install_packages
 )
 
-echo [1/4] Downloading Python 3.12 (embedded^)...
-curl -L --progress-bar -o "runtime\python.zip" "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip"
+echo [1/4] Downloading Python 3.12 (standalone^)...
+echo       This is ~40 MB, please wait...
+curl -L --progress-bar -o "runtime\python.tar.gz" "https://github.com/indygreg/python-build-standalone/releases/download/20241219/cpython-3.12.8+20241219-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"
 if errorlevel 1 (
     echo.
     echo FAILED to download Python. Check your internet connection.
@@ -31,24 +32,19 @@ if errorlevel 1 (
 )
 
 echo       Extracting...
-mkdir "runtime\python" 2>nul
-tar -xf "runtime\python.zip" -C "runtime\python"
-del "runtime\python.zip"
+tar -xzf "runtime\python.tar.gz" -C "runtime"
+del "runtime\python.tar.gz"
 
-:: Enable pip — rewrite the ._pth file so 'import site' is active.
-(
-echo python312.zip
-echo .
-echo import site
-) > "runtime\python\python312._pth"
+if not exist "runtime\python\python.exe" (
+    echo ERROR: Python extraction failed.
+    pause
+    exit /b 1
+)
 
-echo [2/4] Installing pip...
-curl -sSL -o "runtime\get-pip.py" "https://bootstrap.pypa.io/get-pip.py"
-"runtime\python\python.exe" "runtime\get-pip.py" --no-warn-script-location -q
-del "runtime\get-pip.py"
+echo [OK] Python ready (includes tkinter^).
 
 :install_packages
-echo [3/4] Installing Python packages...
+echo [2/4] Installing Python packages...
 "runtime\python\python.exe" -m pip install PyYAML -q --no-warn-script-location 2>nul
 
 :: -------------------------------------------------------
@@ -59,7 +55,7 @@ if exist "runtime\rclone\rclone.exe" (
     goto :config
 )
 
-echo [4/4] Downloading rclone...
+echo [3/4] Downloading rclone...
 curl -L --progress-bar -o "runtime\rclone.zip" "https://downloads.rclone.org/rclone-current-windows-amd64.zip"
 if errorlevel 1 (
     echo.
