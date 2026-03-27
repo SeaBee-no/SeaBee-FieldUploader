@@ -40,6 +40,48 @@ def _get_windows_log_config_dir() -> str:
     return os.path.join(_get_windows_log_base(), "config")
 
 
+def _get_windows_store_cache_roaming_base() -> str | None:
+    localappdata = os.environ.get("LOCALAPPDATA")
+    if not localappdata:
+        return None
+
+    packages_dir = os.path.join(localappdata, "Packages")
+    if not os.path.isdir(packages_dir):
+        return None
+
+    exe = (sys.executable or "").replace("/", "\\")
+    exe_lower = exe.lower()
+
+    preferred_pkg: str | None = None
+    marker = "\\packages\\"
+    idx = exe_lower.find(marker)
+    if idx != -1:
+        rest = exe[idx + len(marker) :]
+        preferred_pkg = rest.split("\\", 1)[0]
+
+    # Prefer the package referenced by sys.executable if possible.
+    candidates: list[str] = []
+    if preferred_pkg and preferred_pkg.lower().startswith("pythonsoftwarefoundation.python"):
+        candidates.append(preferred_pkg)
+
+    try:
+        for entry in os.listdir(packages_dir):
+            if not entry.lower().startswith("pythonsoftwarefoundation.python"):
+                continue
+            if entry not in candidates:
+                candidates.append(entry)
+    except Exception:
+        return None
+
+    for pkg in candidates:
+        base = os.path.join(packages_dir, pkg, "LocalCache", "Roaming")
+        # The folder may not exist until something writes to it.
+        if os.path.isdir(os.path.join(packages_dir, pkg)):
+            return base
+
+    return None
+
+
 def _is_windows_store_python_roaming(path: str | None) -> bool:
     if not path:
         return False
@@ -66,9 +108,11 @@ def _get_user_config_dir_windows() -> str:
         return override
 
     # Microsoft Store Python can silently redirect writes to Roaming into LocalCache.
-    # Use a non-virtualized location instead.
+    # Embrace that and use the cache path directly so users can actually find the files.
     if _is_windows_store_python():
-        return _get_windows_log_config_dir()
+        cache_base = _get_windows_store_cache_roaming_base()
+        if cache_base:
+            return os.path.join(cache_base, APP_NAME)
 
     env_base = _get_windows_env_roaming_base()
 
@@ -94,12 +138,15 @@ def _migrate_config_dir_if_needed() -> None:
 
     candidates: list[str] = []
 
-    # Candidate 1: whatever APPDATA points to
+    # Candidate 1: normal Roaming target (what we'd expect on non-Store Python)
+    candidates.append(os.path.join(_get_windows_real_roaming_base(), APP_NAME))
+
+    # Candidate 2: whatever APPDATA points to
     appdata = os.environ.get("APPDATA")
     if appdata:
         candidates.append(os.path.join(appdata, APP_NAME))
 
-    # Candidate 2: Store package LocalCache\Roaming
+    # Candidate 3: Store package LocalCache\Roaming
     try:
         localappdata = os.environ.get("LOCALAPPDATA")
         if localappdata:
@@ -124,6 +171,8 @@ def _migrate_config_dir_if_needed() -> None:
 
     for old_dir in unique_candidates:
         if not os.path.isdir(old_dir):
+            continue
+        if os.path.normcase(os.path.abspath(old_dir)) == os.path.normcase(os.path.abspath(new_dir)):
             continue
         log_debug(f"Config migration: old={old_dir} new={new_dir}")
         for name in ["defaults.txt", "rclone.conf", "bucket.conf", "rclone.exe"]:
@@ -443,7 +492,8 @@ def bootstrap_appdata_files() -> None:
         log_debug(f"windows store python: {_is_windows_store_python()}")
         log_debug(f"windows env roaming base: {_get_windows_env_roaming_base()}")
         log_debug(f"windows real roaming base: {_get_windows_real_roaming_base()}")
-        log_debug(f"windows log config dir: {_get_windows_log_config_dir()}")
+        log_debug(f"windows store cache roaming base: {_get_windows_store_cache_roaming_base()!r}")
+        log_debug(f"windows log base: {_get_windows_log_base()}")
     log_debug(f"User config dir: {get_user_config_dir()}")
     log_debug(f"App root dir: {get_app_root_dir()}")
     log_debug(f"Resources dir: {get_resources_dir()}")
