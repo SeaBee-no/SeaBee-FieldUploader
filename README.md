@@ -1,33 +1,69 @@
 # SeaBee FieldUploader Project
 
 ## Overview
-This repository contains the SeaBee FieldUploader (Windows-friendly Tkinter GUI) for field computers.
+This repository contains the SeaBee FieldUploader (Tkinter GUI) for field computers.
 
 The backend/server components that ingest and process uploads have been moved to a separate repository to keep this one clean.
 
-## Running thrugh UV
+## Running through UV
 
-This method will not work on a NINA laptop, but if you have a non-restricted computer, this method is prefered. Install UV through:
+This method will not work on a NINA laptop, but if you have a non-restricted computer, this method is preferred. Install UV through:
 
 ```powershell
 # On Windows.
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
+```bash
+# On Linux / macOS.
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
 Then install Rclone:
 ```powershell
+# Windows
 winget install Rclone.Rclone
+```
+```bash
+# Debian/Ubuntu
+sudo apt install rclone
 ```
 
 Then you can run directly from GitHub:
 
-```powershell
+```
 uvx --from "git+https://github.com/SeaBee-no/SeaBee-FieldUploader" seabee-fielduploader
 ```
 
+## Linux setup
+
+1. Install system dependencies:
+	```bash
+	# Debian / Ubuntu
+	sudo apt install python3 python3-tk python3-pip rclone
+
+	# Fedora
+	sudo dnf install python3 python3-tkinter python3-pip rclone
+
+	# Arch
+	sudo pacman -S python tk python-pip rclone
+	```
+
+2. Install Python dependencies:
+	```bash
+	pip install PyYAML
+	```
+
+3. Run the app:
+	```bash
+	python3 -m app
+	```
+
+Config files are stored in `~/.config/seabee-fielduploader/`.
+
 ## Windows setup (zip + Python)
 
-An alternative method is downloading the source code and running locally. This is the method for NINA restriced computers.
+An alternative method is downloading the source code and running locally. This is the method for NINA restricted computers.
 
 1. Download the `.zip` from the GitHub Releases page.
 
@@ -36,7 +72,8 @@ An alternative method is downloading the source code and running locally. This i
 
 3. Download/Install Rclone
 	Either:
-	- 
+	- `winget install Rclone.Rclone`
+
 	Or:
 	- Download from https://rclone.org/downloads/
 	- Place it either:
@@ -62,7 +99,7 @@ On first startup, the app will auto-create these per-user config files:
 
 `bucket.conf` controls the upload target (`REMOTE_NAME`, `BUCKET_NAME`, `OBJECT_PREFIX`).
 
-The GUI also has buttons for editing `rclone.conf` and `defaults.txt`.
+The GUI has buttons for editing `rclone.conf`, `defaults.txt`, and opening the config folder.
 
 ## Desktop shortcut (Windows)
 

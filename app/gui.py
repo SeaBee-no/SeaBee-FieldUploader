@@ -5,189 +5,35 @@ import shutil
 import subprocess
 import sys
 import threading
-import tkinter as tk
-from tkinter import filedialog, messagebox
-from tkinter import ttk
-
 import time
-
 import shlex
 import importlib.resources
-import ctypes
-import ctypes.wintypes
+
+# tkinter requires a system package on Linux (e.g. apt install python3-tk).
+try:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox
+    from tkinter import ttk
+except ImportError:
+    print(
+        "ERROR: tkinter is not installed.\n"
+        "\n"
+        "On Debian/Ubuntu:  sudo apt install python3-tk\n"
+        "On Fedora:         sudo dnf install python3-tkinter\n"
+        "On Arch:           sudo pacman -S tk\n"
+        "On macOS:          brew install python-tk\n",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 import yaml
 
 APP_NAME = "SeaBee-FieldUploader"
 
 
-def _is_windows_store_python() -> bool:
-    if not sys.platform.startswith("win"):
-        return False
-    exe = (sys.executable or "").replace("/", "\\").lower()
-    return (
-        "\\windowsapps\\" in exe
-        or "pythonsoftwarefoundation.python" in exe
-        or "\\appdata\\local\\packages\\pythonsoftwarefoundation.python" in exe
-    )
-
-
-def _get_windows_log_base() -> str:
-    return os.path.join("C:\\", "log", APP_NAME)
-
-
-def _get_windows_log_config_dir() -> str:
-    return os.path.join(_get_windows_log_base(), "config")
-
-
-def _get_windows_store_cache_roaming_base() -> str | None:
-    localappdata = os.environ.get("LOCALAPPDATA")
-    if not localappdata:
-        return None
-
-    packages_dir = os.path.join(localappdata, "Packages")
-    if not os.path.isdir(packages_dir):
-        return None
-
-    exe = (sys.executable or "").replace("/", "\\")
-    exe_lower = exe.lower()
-
-    preferred_pkg: str | None = None
-    marker = "\\packages\\"
-    idx = exe_lower.find(marker)
-    if idx != -1:
-        rest = exe[idx + len(marker) :]
-        preferred_pkg = rest.split("\\", 1)[0]
-
-    # Prefer the package referenced by sys.executable if possible.
-    candidates: list[str] = []
-    if preferred_pkg and preferred_pkg.lower().startswith("pythonsoftwarefoundation.python"):
-        candidates.append(preferred_pkg)
-
-    try:
-        for entry in os.listdir(packages_dir):
-            if not entry.lower().startswith("pythonsoftwarefoundation.python"):
-                continue
-            if entry not in candidates:
-                candidates.append(entry)
-    except Exception:
-        return None
-
-    for pkg in candidates:
-        base = os.path.join(packages_dir, pkg, "LocalCache", "Roaming")
-        # The folder may not exist until something writes to it.
-        if os.path.isdir(os.path.join(packages_dir, pkg)):
-            return base
-
-    return None
-
-
-def _is_windows_store_python_roaming(path: str | None) -> bool:
-    if not path:
-        return False
-    p = path.replace("/", "\\").lower()
-    return "\\appdata\\local\\packages\\" in p and "\\localcache\\roaming" in p
-
-
-def _get_windows_real_roaming_base() -> str:
-    userprofile = os.environ.get("USERPROFILE") or os.path.expanduser("~")
-    return os.path.join(userprofile, "AppData", "Roaming")
-
-
-def _get_windows_env_roaming_base() -> str:
-    base = os.environ.get("APPDATA")
-    if base:
-        return base
-    return _get_windows_real_roaming_base()
-
-
-def _get_user_config_dir_windows() -> str:
-    # Allow explicit override (useful for debugging / locked-down environments).
-    override = os.environ.get("SEABEE_CONFIG_DIR")
-    if override:
-        return override
-
-    # Microsoft Store Python can silently redirect writes to Roaming into LocalCache.
-    # Embrace that and use the cache path directly so users can actually find the files.
-    if _is_windows_store_python():
-        cache_base = _get_windows_store_cache_roaming_base()
-        if cache_base:
-            return os.path.join(cache_base, APP_NAME)
-
-    env_base = _get_windows_env_roaming_base()
-
-    # Microsoft Store Python often redirects APPDATA to a per-package LocalCache\Roaming.
-    # Prefer the real profile roaming folder in that case, so config is visible and stable.
-    if _is_windows_store_python_roaming(env_base):
-        return os.path.join(_get_windows_real_roaming_base(), APP_NAME)
-
-    return os.path.join(env_base, APP_NAME)
-
-
-def _migrate_config_dir_if_needed() -> None:
-    if not sys.platform.startswith("win"):
-        return
-
-    if not _is_windows_store_python():
-        return
-
-    new_dir = get_user_config_dir()
-    if not _safe_makedirs(new_dir):
-        log_debug(f"Config migration skipped: cannot create {new_dir}")
-        return
-
-    candidates: list[str] = []
-
-    # Candidate 1: normal Roaming target (what we'd expect on non-Store Python)
-    candidates.append(os.path.join(_get_windows_real_roaming_base(), APP_NAME))
-
-    # Candidate 2: whatever APPDATA points to
-    appdata = os.environ.get("APPDATA")
-    if appdata:
-        candidates.append(os.path.join(appdata, APP_NAME))
-
-    # Candidate 3: Store package LocalCache\Roaming
-    try:
-        localappdata = os.environ.get("LOCALAPPDATA")
-        if localappdata:
-            packages_dir = os.path.join(localappdata, "Packages")
-            if os.path.isdir(packages_dir):
-                for entry in os.listdir(packages_dir):
-                    if not entry.lower().startswith("pythonsoftwarefoundation.python"):
-                        continue
-                    candidates.append(os.path.join(packages_dir, entry, "LocalCache", "Roaming", APP_NAME))
-    except Exception as e:
-        log_debug(f"Migration scan failed: {e}")
-
-    # Deduplicate
-    seen: set[str] = set()
-    unique_candidates: list[str] = []
-    for c in candidates:
-        key = os.path.normcase(os.path.abspath(c))
-        if key in seen:
-            continue
-        seen.add(key)
-        unique_candidates.append(c)
-
-    for old_dir in unique_candidates:
-        if not os.path.isdir(old_dir):
-            continue
-        if os.path.normcase(os.path.abspath(old_dir)) == os.path.normcase(os.path.abspath(new_dir)):
-            continue
-        log_debug(f"Config migration: old={old_dir} new={new_dir}")
-        for name in ["defaults.txt", "rclone.conf", "bucket.conf", "rclone.exe"]:
-            src = os.path.join(old_dir, name)
-            dst = os.path.join(new_dir, name)
-            try:
-                if not os.path.isfile(src):
-                    continue
-                if os.path.isfile(dst):
-                    continue
-                shutil.copyfile(src, dst)
-                log_debug(f"Migrated {name}: {src} -> {dst}")
-            except Exception as e:
-                log_debug(f"Migration failed for {name}: {e}")
-
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _safe_makedirs(path: str) -> bool:
     try:
@@ -198,16 +44,14 @@ def _safe_makedirs(path: str) -> bool:
 
 
 def _debug_log_path() -> str | None:
-    # Easy-to-find location for field debugging.
     if sys.platform.startswith("win"):
         try:
-            c_log_dir = _get_windows_log_base()
+            c_log_dir = os.path.join("C:\\", "log", APP_NAME)
             if _safe_makedirs(c_log_dir):
                 return os.path.join(c_log_dir, "debug.log")
         except Exception:
             pass
 
-    # Best-effort: write to the per-user config dir. If that fails, fall back to temp.
     try:
         cfg_dir = get_user_config_dir()
         if _safe_makedirs(cfg_dir):
@@ -216,13 +60,10 @@ def _debug_log_path() -> str | None:
         pass
 
     try:
-        tmp = os.environ.get("TEMP") or os.environ.get("TMP")
-        if tmp and _safe_makedirs(tmp):
-            return os.path.join(tmp, "seabee-fielduploader-debug.log")
+        import tempfile
+        return os.path.join(tempfile.gettempdir(), "seabee-fielduploader-debug.log")
     except Exception:
-        pass
-
-    return None
+        return None
 
 
 def log_debug(message: str) -> None:
@@ -242,9 +83,83 @@ def log_debug(message: str) -> None:
     except Exception:
         pass
 
+
+# ---------------------------------------------------------------------------
+# Config dir resolution — intentionally simple.
+#
+# On Windows we use %APPDATA%.  Microsoft Store Python may transparently
+# redirect that to a per-package LocalCache\Roaming folder; that is fine
+# because reads and writes within the same Python instance stay consistent.
+# The "Open config folder" button lets users find the actual path on disk.
+# ---------------------------------------------------------------------------
+
+def get_user_config_dir() -> str:
+    override = os.environ.get("SEABEE_CONFIG_DIR")
+    if override:
+        return override
+
+    if sys.platform.startswith("win"):
+        base = os.environ.get("APPDATA")
+        if not base:
+            base = os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
+        return os.path.join(base, APP_NAME)
+
+    base = os.environ.get("XDG_CONFIG_HOME")
+    if not base:
+        base = os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "seabee-fielduploader")
+
+
+def _migrate_config_if_needed() -> None:
+    """Copy config files from known old locations if the current config dir is empty."""
+    new_dir = get_user_config_dir()
+    if not _safe_makedirs(new_dir):
+        return
+
+    if os.path.isfile(os.path.join(new_dir, "rclone.conf")):
+        return
+
+    old_candidates: list[str] = []
+
+    if sys.platform.startswith("win"):
+        # Real Roaming (bypasses Store Python virtualisation).
+        userprofile = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+        old_candidates.append(os.path.join(userprofile, "AppData", "Roaming", APP_NAME))
+
+        # Store Python LocalCache\Roaming locations.
+        localappdata = os.environ.get("LOCALAPPDATA")
+        if localappdata:
+            packages_dir = os.path.join(localappdata, "Packages")
+            try:
+                if os.path.isdir(packages_dir):
+                    for entry in os.listdir(packages_dir):
+                        if entry.lower().startswith("pythonsoftwarefoundation.python"):
+                            old_candidates.append(
+                                os.path.join(packages_dir, entry, "LocalCache", "Roaming", APP_NAME)
+                            )
+            except Exception:
+                pass
+
+    for old_dir in old_candidates:
+        if not os.path.isdir(old_dir):
+            continue
+        if os.path.normcase(os.path.abspath(old_dir)) == os.path.normcase(os.path.abspath(new_dir)):
+            continue
+        for name in ["defaults.txt", "rclone.conf", "bucket.conf"]:
+            src = os.path.join(old_dir, name)
+            dst = os.path.join(new_dir, name)
+            if os.path.isfile(src) and not os.path.isfile(dst):
+                try:
+                    shutil.copyfile(src, dst)
+                    log_debug(f"Migrated {name}: {src} -> {dst}")
+                except Exception as e:
+                    log_debug(f"Migration failed for {name}: {e}")
+        break  # Migrate from the first found old dir only.
+
+
 DEFAULT_REMOTE_NAME = "minio"
 DEFAULT_BUCKET_NAME = "fielduploads"
-DEFAULT_OBJECT_PREFIX = "seabirds/"  # Remote path inside bucket
+DEFAULT_OBJECT_PREFIX = "seabirds/"
 
 
 def safe_load_yaml(path: str) -> dict:
@@ -270,14 +185,6 @@ def count_files_in_folder(folder_path: str, yaml_filename: str) -> int:
     return n
 
 
-def get_own_file_path(filename: str | None = None) -> str:
-    if getattr(sys, "frozen", False):
-        base_path = os.path.dirname(sys.executable)
-    else:
-        base_path = os.path.dirname(os.path.realpath(__file__))
-    return os.path.join(base_path, filename) if filename else base_path
-
-
 def get_app_root_dir() -> str:
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
@@ -288,19 +195,17 @@ def get_resources_dir() -> str:
     return os.path.join(get_app_root_dir(), "resources")
 
 
-def get_icon_path() -> str:
-    return os.path.join(get_resources_dir(), "seabee.ico")
-
-
-def get_legacy_or_app_icon_path() -> str:
-    # Current repo layout: app/seabee.ico
-    return os.path.join(get_app_root_dir(), "app", "seabee.ico")
-
+# ---------------------------------------------------------------------------
+# Icon
+# ---------------------------------------------------------------------------
 
 def _try_set_windows_appusermodel_id(app_id: str) -> None:
     if not sys.platform.startswith("win"):
         return
     try:
+        import ctypes
+        import ctypes.wintypes
+
         shell32 = ctypes.windll.shell32
         set_id = getattr(shell32, "SetCurrentProcessExplicitAppUserModelID", None)
         if set_id is None:
@@ -316,6 +221,9 @@ def _try_set_windows_taskbar_icon(root: tk.Tk, icon_path: str) -> bool:
     if not sys.platform.startswith("win"):
         return False
     try:
+        import ctypes
+        import ctypes.wintypes
+
         root.update_idletasks()
         hwnd = root.winfo_id()
         if not hwnd:
@@ -350,13 +258,10 @@ def _try_set_windows_taskbar_icon(root: tk.Tk, icon_path: str) -> bool:
         ]
         SendMessageW.restype = ctypes.wintypes.LPARAM
 
-        # size=0,0 lets Windows pick the best icon size from the .ico
         hicon = LoadImageW(None, icon_path, IMAGE_ICON, 0, 0, LR_LOADFROMFILE)
         if not hicon:
             return False
 
-        # Keep a reference to avoid premature cleanup; we intentionally don't DestroyIcon
-        # because Tk/Windows may still be using it.
         if not hasattr(root, "_seabee_hicons"):
             root._seabee_hicons = []  # type: ignore[attr-defined]
         root._seabee_hicons.append(hicon)  # type: ignore[attr-defined]
@@ -369,42 +274,61 @@ def _try_set_windows_taskbar_icon(root: tk.Tk, icon_path: str) -> bool:
         return False
 
 
-def set_window_icon(root: tk.Tk) -> None:
-    icon_candidates: list[str] = []
+def _find_icon_path() -> str | None:
+    """Return the first existing icon path, or None."""
+    candidates: list[str] = []
 
-    # 1) Legacy/zip/source runs: top-level resources/ (older layout)
-    icon_candidates.append(get_icon_path())
+    # 1) Same directory as gui.py (app/seabee.ico — the repo layout)
+    candidates.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), "seabee.ico"))
 
-    # 2) Current repo layout: app/seabee.ico
-    icon_candidates.append(get_legacy_or_app_icon_path())
+    # 2) Released zip layout: resources/seabee.ico
+    candidates.append(os.path.join(get_resources_dir(), "seabee.ico"))
 
-    # 3) For uvx/pip installs: package data under the app package
+    # 3) importlib.resources (uvx / pip install)
     try:
         icon_res = importlib.resources.files("app").joinpath("seabee.ico")
-        if icon_res.is_file():
-            with importlib.resources.as_file(icon_res) as icon_file:
-                icon_candidates.append(str(icon_file))
+        if hasattr(icon_res, "is_file") and icon_res.is_file():
+            with importlib.resources.as_file(icon_res) as p:
+                candidates.append(str(p))
+    except Exception:
+        pass
+
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return None
+
+
+def set_window_icon(root: tk.Tk) -> None:
+    icon_path = _find_icon_path()
+    if not icon_path:
+        log_debug("No icon file found; skipping icon setup")
+        return
+
+    try:
+        root.iconbitmap(icon_path)
     except Exception as e:
-        log_debug(f"Icon discovery failed: {e}")
-
-    for path in icon_candidates:
+        log_debug(f"iconbitmap failed ({icon_path!r}): {e}")
+        # On Linux, .ico is often unsupported by iconbitmap.  Try iconphoto.
         try:
-            if path and os.path.isfile(path):
-                root.iconbitmap(path)
-                _try_set_windows_taskbar_icon(root, path)
-                return
-        except Exception as e:
-            log_debug(f"Failed to set icon from {path!r}: {e}")
+            img = tk.PhotoImage(file=icon_path)
+            root.iconphoto(True, img)
+        except Exception as e2:
+            log_debug(f"iconphoto also failed: {e2}")
+
+    _try_set_windows_taskbar_icon(root, icon_path)
 
 
-DEFAULTS_TEMPLATE_TEXT = """# defaults.txt
+DEFAULTS_TEMPLATE_TEXT = """\
+# defaults.txt
 theme=Seabirds
 organisation=NINA
 creator_name=
 project=SEAPOP 3B - Kartlegging av hekkebestander
 """
 
-RCLONE_TEMPLATE_TEXT = """# Template rclone config for SeaBee FieldUploader
+RCLONE_TEMPLATE_TEXT = """\
+# Template rclone config for SeaBee FieldUploader
 #
 # Fill in the values below.
 
@@ -417,7 +341,8 @@ secret_access_key = <SECRET_ACCESS_KEY>
 endpoint = https://<MINIO_HOST>
 """
 
-BUCKET_TEMPLATE_TEXT = f"""# bucket.conf
+BUCKET_TEMPLATE_TEXT = f"""\
+# bucket.conf
 # Controls where uploads go in rclone.
 #
 # Keys are case-insensitive.
@@ -428,21 +353,27 @@ OBJECT_PREFIX={DEFAULT_OBJECT_PREFIX}
 """
 
 
-def get_user_config_dir() -> str:
-    if sys.platform.startswith("win"):
-        return _get_user_config_dir_windows()
-
-    base = os.environ.get("XDG_CONFIG_HOME")
-    if not base:
-        base = os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "seabee-fielduploader")
-
-
 def open_file_for_edit(path: str) -> None:
     if sys.platform.startswith("win"):
         os.startfile(path)  # type: ignore[attr-defined]
         return
-    # Best-effort for mac/linux
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+        return
+    try:
+        subprocess.Popen(["xdg-open", path])
+    except Exception:
+        pass
+
+
+def open_folder(path: str) -> None:
+    """Open a folder in the system file manager."""
+    if sys.platform.startswith("win"):
+        os.startfile(path)  # type: ignore[attr-defined]
+        return
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+        return
     try:
         subprocess.Popen(["xdg-open", path])
     except Exception:
@@ -485,20 +416,11 @@ def ensure_appdata_file(filename: str, template_filename: str | None) -> str:
 
 
 def bootstrap_appdata_files() -> None:
-    _migrate_config_dir_if_needed()
-    log_debug("Bootstrapping per-user config files")
-    log_debug(f"APPDATA={os.environ.get('APPDATA')!r} USERPROFILE={os.environ.get('USERPROFILE')!r}")
-    if sys.platform.startswith("win"):
-        log_debug(f"windows store python: {_is_windows_store_python()}")
-        log_debug(f"windows env roaming base: {_get_windows_env_roaming_base()}")
-        log_debug(f"windows real roaming base: {_get_windows_real_roaming_base()}")
-        log_debug(f"windows store cache roaming base: {_get_windows_store_cache_roaming_base()!r}")
-        log_debug(f"windows log base: {_get_windows_log_base()}")
-    log_debug(f"User config dir: {get_user_config_dir()}")
-    log_debug(f"App root dir: {get_app_root_dir()}")
-    log_debug(f"Resources dir: {get_resources_dir()}")
+    _migrate_config_if_needed()
+    log_debug(f"Config dir: {get_user_config_dir()}")
+    log_debug(f"App root:   {get_app_root_dir()}")
+    log_debug(f"Resources:  {get_resources_dir()}")
 
-    # Create files on first startup to make them easy to find/edit.
     ensure_appdata_file("defaults.txt", "defaults.txt")
     ensure_appdata_file("rclone.conf", "rclone.conf.template")
     ensure_appdata_file("bucket.conf", "bucket.conf.template")
@@ -508,39 +430,17 @@ def write_diagnostics_snapshot() -> None:
     cfg_dir = get_user_config_dir()
     log_debug("--- Diagnostics snapshot ---")
     log_debug(f"cwd={os.getcwd()}")
-    log_debug(f"os.name={os.name} sys.platform={sys.platform}")
-    log_debug(f"sys.version={sys.version.replace(os.linesep, ' ')}")
-    log_debug(f"sys.executable={sys.executable}")
+    log_debug(f"platform={sys.platform}  python={sys.version.split()[0]}  exe={sys.executable}")
     log_debug(f"frozen={getattr(sys, 'frozen', False)}")
-    log_debug(
-        "env "
-        + " ".join(
-            [
-                f"APPDATA={os.environ.get('APPDATA')!r}",
-                f"LOCALAPPDATA={os.environ.get('LOCALAPPDATA')!r}",
-                f"USERPROFILE={os.environ.get('USERPROFILE')!r}",
-                f"XDG_CONFIG_HOME={os.environ.get('XDG_CONFIG_HOME')!r}",
-            ]
-        )
-    )
-    log_debug(f"get_user_config_dir()={cfg_dir}")
+    log_debug(f"config_dir={cfg_dir}")
     for name in ["defaults.txt", "rclone.conf", "bucket.conf"]:
         p = os.path.join(cfg_dir, name)
         try:
             exists = os.path.isfile(p)
             size = os.path.getsize(p) if exists else 0
-            log_debug(f"file {name}: exists={exists} path={p} size={size}")
+            log_debug(f"  {name}: exists={exists} size={size}")
         except Exception as e:
-            log_debug(f"file {name}: error checking {p}: {e}")
-
-    try:
-        if os.path.isdir(cfg_dir):
-            items = sorted(os.listdir(cfg_dir))
-            log_debug(f"config dir listing ({cfg_dir}): {items}")
-        else:
-            log_debug(f"config dir missing: {cfg_dir}")
-    except Exception as e:
-        log_debug(f"config dir listing failed: {e}")
+            log_debug(f"  {name}: error={e}")
 
 
 def parse_kv_file(path: str) -> dict[str, str]:
@@ -647,23 +547,14 @@ def parse_defaults_file(path: str) -> dict:
 
 
 def write_defaults_file(path: str, theme: str, organisation: str, creator_name: str, project: str) -> None:
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("# defaults.txt\n")
-            f.write(f"theme={theme}\n")
-            f.write(f"organisation={organisation}\n")
-            f.write(f"creator_name={creator_name}\n")
-            f.write(f"project={project}\n")
-        try:
-            exists = os.path.isfile(path)
-            size = os.path.getsize(path) if exists else 0
-            log_debug(f"defaults write ok: path={path} exists={exists} size={size}")
-        except Exception as e:
-            log_debug(f"defaults write ok but stat failed: path={path} err={e}")
-    except Exception as e:
-        log_debug(f"defaults write FAILED: path={path} err={e}")
-        raise
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("# defaults.txt\n")
+        f.write(f"theme={theme}\n")
+        f.write(f"organisation={organisation}\n")
+        f.write(f"creator_name={creator_name}\n")
+        f.write(f"project={project}\n")
+    log_debug(f"defaults written: {path}")
 
 
 def ensure_defaults_ready() -> dict:
@@ -722,17 +613,21 @@ class S3UploaderApp(ttk.Frame):
             row=4, column=2, sticky="E", pady=(6, 0)
         )
 
-        ttk.Label(self, text="Folder to upload:").grid(row=5, column=0, sticky="E", pady=(12, 4))
+        ttk.Button(self, text="Open config folder", command=self.open_config_folder).grid(
+            row=5, column=0, columnspan=3, sticky="W", pady=(6, 0)
+        )
+
+        ttk.Label(self, text="Folder to upload:").grid(row=6, column=0, sticky="E", pady=(12, 4))
         self.folder_var = tk.StringVar(master=self)
         ttk.Entry(self, textvariable=self.folder_var, width=45).grid(
-            row=5, column=1, sticky="EW", pady=(12, 4)
+            row=6, column=1, sticky="EW", pady=(12, 4)
         )
         ttk.Button(self, text="Browse…", command=self.select_folder).grid(
-            row=5, column=2, padx=5, pady=(12, 4)
+            row=6, column=2, padx=5, pady=(12, 4)
         )
 
         ttk.Button(self, text="Upload to S3", command=self.start_upload).grid(
-            row=6, column=1, pady=(10, 0)
+            row=7, column=1, pady=(10, 0)
         )
 
         self.status_var = tk.StringVar(master=self, value="Idle")
@@ -740,19 +635,24 @@ class S3UploaderApp(ttk.Frame):
         self.eta_var = tk.StringVar(master=self, value="")
 
         ttk.Label(self, textvariable=self.status_var, wraplength=620).grid(
-            row=7, column=0, columnspan=3, sticky="W", pady=(15, 2)
+            row=8, column=0, columnspan=3, sticky="W", pady=(15, 2)
         )
         ttk.Label(self, textvariable=self.speed_var, wraplength=620).grid(
-            row=8, column=0, columnspan=3, sticky="W"
+            row=9, column=0, columnspan=3, sticky="W"
         )
         ttk.Label(self, textvariable=self.eta_var, wraplength=620).grid(
-            row=9, column=0, columnspan=3, sticky="W"
+            row=10, column=0, columnspan=3, sticky="W"
         )
 
         self.columnconfigure(1, weight=1)
 
         self._rclone_exe: str | None = None
         self._rclone_conf: str | None = None
+
+    def open_config_folder(self) -> None:
+        cfg_dir = get_user_config_dir()
+        _safe_makedirs(cfg_dir)
+        open_folder(cfg_dir)
 
     def save_defaults(self) -> None:
         defaults_path = ensure_appdata_file("defaults.txt", "defaults.txt")
@@ -787,12 +687,13 @@ class S3UploaderApp(ttk.Frame):
     def ensure_rclone_ready(self) -> bool:
         rclone_exe = resolve_rclone_exe()
         if not rclone_exe:
+            cfg_dir = get_user_config_dir()
             messagebox.showerror(
                 "Missing rclone",
                 "Could not find rclone executable.\n\n"
                 "Fix one of these:\n"
-                "- Place rclone.exe next to the program\n"
-                "- Copy rclone.exe to %APPDATA%\\SeaBee-FieldUploader\\rclone.exe\n"
+                "- Place rclone next to the program\n"
+                f"- Copy rclone to {cfg_dir}\n"
                 "- Put rclone on PATH\n"
                 "- Set SEABEE_RCLONE_EXE to the full path",
             )
