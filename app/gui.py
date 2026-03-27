@@ -536,10 +536,6 @@ class S3UploaderApp(ttk.Frame):
             row=4, column=2, sticky="E", pady=(6, 0),
         )
 
-        ttk.Button(self, text="Open config folder", command=self.open_config_folder).grid(
-            row=5, column=0, columnspan=3, sticky="W", pady=(6, 0),
-        )
-
         ttk.Label(self, text="Folder to upload:").grid(row=6, column=0, sticky="E", pady=(12, 4))
         self.folder_var = tk.StringVar(master=self)
         ttk.Entry(self, textvariable=self.folder_var, width=45).grid(
@@ -573,11 +569,6 @@ class S3UploaderApp(ttk.Frame):
         self._rclone_conf: str | None = None
 
     # -- button handlers --
-
-    def open_config_folder(self) -> None:
-        cfg_dir = get_user_config_dir()
-        _safe_makedirs(cfg_dir)
-        open_folder(cfg_dir)
 
     def save_defaults(self) -> None:
         defaults_path = ensure_config_file("defaults.txt", "defaults.txt")
