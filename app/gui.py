@@ -650,10 +650,21 @@ class S3UploaderApp(ttk.Frame):
             self._rclone_exe, "copy", source, dest,
             "--config", self._rclone_conf,
             "--progress",
-            "--exclude", "$RECYCLE.BIN/**",
+            "--filter", "- $RECYCLE.BIN/**",
+            "--filter", "- System Volume Information/**",
+            "--filter", "- .Trash-*/**",
+            "--filter", "- .Trashes/**",
+            "--filter", "- .fseventsd/**",
+            "--filter", "- .Spotlight-V100/**",
+            "--filter", "- .TemporaryItems/**",
+            "--filter", "- lost+found/**",
+            "--filter", "- Thumbs.db",
+            "--filter", "- desktop.ini",
+            "--ignore-errors",
+            "--log-level", "NOTICE",
         ]
         if include_yaml_only:
-            command += ["--include", "*.yaml"]
+            command += ["--filter", "+ *.yaml", "--filter", "- *"]
 
         print(
             "\n[SeaBee] rclone: " + format_command_for_display(command) + "\n",
@@ -682,8 +693,19 @@ class S3UploaderApp(ttk.Frame):
                 print(line, flush=True)
 
         process.wait()
-        if process.returncode and process.returncode != 0:
+        # rclone exit codes we tolerate:
+        #   6 = less serious errors (e.g. permission denied on individual files
+        #       under Windows system folders) – with --ignore-errors the
+        #       remaining files are still uploaded.
+        tolerated_codes = {0, 6}
+        if process.returncode not in tolerated_codes:
             raise RuntimeError(f"rclone failed with exit code {process.returncode}")
+        if process.returncode == 6:
+            print(
+                "[SeaBee] rclone reported non-fatal errors (exit code 6); "
+                "continuing. Check the log above for skipped files.",
+                flush=True,
+            )
 
     def upload_folder(self, folder: str) -> None:
         try:
