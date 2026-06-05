@@ -661,8 +661,36 @@ class S3UploaderApp(ttk.Frame):
     # Exit codes that indicate a transient / retryable failure.
     # 0 and 6 are not failures we need to retry (6 = some files skipped, handled separately).
     # 9 = success with nothing to do.
-    # 1, 3, 4, 7, 8, 10 are configuration / fatal errors — looping won't help.
+    # Exit code 1 is documented as syntax / usage error, but some remotes also
+    # use it for network failures. We only retry code 1 when the output looks transient.
     _RCLONE_RETRYABLE_CODES = {2, 5}
+
+    _RCLONE_TRANSIENT_OUTPUT_PATTERNS = [
+        "connection reset",
+        "connection refused",
+        "connection timed out",
+        "context deadline exceeded",
+        "dial tcp",
+        "dns",
+        "forcibly closed by the remote host",
+        "host is down",
+        "i/o timeout",
+        "lookup",
+        "network is down",
+        "network is unreachable",
+        "no such host",
+        "no route to host",
+        "server misbehaving",
+        "socket operation was attempted to an unreachable network",
+        "temporary failure",
+        "temporary failure in name resolution",
+        "timeout awaiting response headers",
+        "tls handshake timeout",
+        "unable to connect",
+        "unreachable network",
+        "wsarecv",
+        "wsasend",
+    ]
 
     @classmethod
     def _describe_rclone_exit(cls, code: int) -> str:
@@ -670,6 +698,11 @@ class S3UploaderApp(ttk.Frame):
             code, ("unknown error", "rclone returned an exit code we don't recognise.")
         )
         return f"exit code {code} — {short}: {long}"
+
+    @classmethod
+    def _rclone_line_looks_transient(cls, line: str) -> bool:
+        lower_line = line.lower()
+        return any(pattern in lower_line for pattern in cls._RCLONE_TRANSIENT_OUTPUT_PATTERNS)
 
     def run_rclone_with_progress(self, source: str, dest: str, include_yaml_only: bool = False) -> None:
         if not self._rclone_exe or not self._rclone_conf:
@@ -719,8 +752,10 @@ class S3UploaderApp(ttk.Frame):
             )
 
             assert process.stdout is not None
+            transient_error_seen = False
             for raw_line in process.stdout:
                 line = raw_line.rstrip("\r\n")
+                transient_error_seen = transient_error_seen or self._rclone_line_looks_transient(line)
                 # Always echo rclone's output to our console window so the user
                 # can see exactly what it's doing (transfers, retries, errors).
                 print(line, flush=True)
@@ -752,7 +787,7 @@ class S3UploaderApp(ttk.Frame):
                 )
                 return
 
-            if rc in self._RCLONE_RETRYABLE_CODES:
+            if rc in self._RCLONE_RETRYABLE_CODES or (rc == 1 and transient_error_seen):
                 wait = min(backoff_seconds, max_backoff)
                 print(
                     f"[SeaBee] rclone failed with {description} "
