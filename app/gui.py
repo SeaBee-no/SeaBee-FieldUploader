@@ -642,6 +642,35 @@ class S3UploaderApp(ttk.Frame):
 
     # -- rclone --
 
+    # Human-readable descriptions for rclone exit codes.
+    # See: https://rclone.org/docs/#exit-code
+    _RCLONE_EXIT_CODES: dict[int, tuple[str, str]] = {
+        0: ("success", "All files transferred successfully."),
+        1: ("syntax / usage error", "Bad command-line arguments or invalid usage."),
+        2: ("uncategorised error", "An unexpected error occurred inside rclone."),
+        3: ("directory not found", "The source or destination path does not exist."),
+        4: ("file not found", "A specific file referenced on the command line was not found."),
+        5: ("temporary error", "A temporary failure — safe to retry (e.g. network blip, 5xx from server)."),
+        6: ("less serious errors", "Some individual files failed (e.g. permission denied) but the run continued."),
+        7: ("fatal error", "A fatal error — retrying is unlikely to help (e.g. auth / config problem)."),
+        8: ("transfer limit reached", "A configured transfer limit was hit (--max-transfer)."),
+        9: ("operation successful but no files transferred", "Nothing needed to be uploaded."),
+        10: ("server-side copy/move not possible", "The remote does not support the requested operation."),
+    }
+
+    # Exit codes that indicate a transient / retryable failure.
+    # 0 and 6 are not failures we need to retry (6 = some files skipped, handled separately).
+    # 9 = success with nothing to do.
+    # 1, 3, 4, 7, 8, 10 are configuration / fatal errors — looping won't help.
+    _RCLONE_RETRYABLE_CODES = {2, 5}
+
+    @classmethod
+    def _describe_rclone_exit(cls, code: int) -> str:
+        short, long = cls._RCLONE_EXIT_CODES.get(
+            code, ("unknown error", "rclone returned an exit code we don't recognise.")
+        )
+        return f"exit code {code} — {short}: {long}"
+
     def run_rclone_with_progress(self, source: str, dest: str, include_yaml_only: bool = False) -> None:
         if not self._rclone_exe or not self._rclone_conf:
             raise RuntimeError("rclone not initialised")
@@ -660,52 +689,87 @@ class S3UploaderApp(ttk.Frame):
             "--filter", "- lost+found/**",
             "--filter", "- Thumbs.db",
             "--filter", "- desktop.ini",
-            "--ignore-errors",
-            "--log-level", "NOTICE",
+            "--retries", "10000",
+            "--low-level-retries", "10000",
+            "--retries-sleep", "30s",
+            "--timeout", "1h",
+            "--contimeout", "1m",
         ]
         if include_yaml_only:
             command += ["--filter", "+ *.yaml", "--filter", "- *"]
 
-        print(
-            "\n[SeaBee] rclone: " + format_command_for_display(command) + "\n",
-            flush=True,
-        )
-
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-
-        assert process.stdout is not None
-        for line in process.stdout:
-            line = line.strip()
-            match = re.search(
-                r"Transferred:\s+([\d.]+\s\w+)\s*/\s*([\d.]+\s\w+),.*?([\d.]+\s\w+/s),\s*ETA\s*([\dhms]+)",
-                line,
-            )
-            if match:
-                self.speed_var.set(f"Speed: {match.group(3)}")
-                self.eta_var.set(f"ETA: {match.group(4)}")
-                self.status_var.set(f"Transferred: {match.group(1)} / {match.group(2)}")
-            if os.environ.get("SEABEE_RCLONE_DEBUG"):
-                print(line, flush=True)
-
-        process.wait()
-        # rclone exit codes we tolerate:
-        #   6 = less serious errors (e.g. permission denied on individual files
-        #       under Windows system folders) – with --ignore-errors the
-        #       remaining files are still uploaded.
-        tolerated_codes = {0, 6}
-        if process.returncode not in tolerated_codes:
-            raise RuntimeError(f"rclone failed with exit code {process.returncode}")
-        if process.returncode == 6:
+        # Outer retry loop: re-invoke rclone on transient failures (network drop,
+        # DNS hiccup, etc). Because `rclone copy` skips files that already exist
+        # on the remote with matching size+modtime, each retry resumes naturally.
+        attempt = 0
+        backoff_seconds = 30
+        max_backoff = 600  # cap at 10 minutes between retries
+        while True:
+            attempt += 1
             print(
-                "[SeaBee] rclone reported non-fatal errors (exit code 6); "
-                "continuing. Check the log above for skipped files.",
+                f"\n[SeaBee] rclone (attempt {attempt}): "
+                + format_command_for_display(command) + "\n",
                 flush=True,
             )
+            if attempt > 1:
+                self.status_var.set(f"Retrying upload (attempt {attempt})…")
+
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+
+            assert process.stdout is not None
+            for line in process.stdout:
+                line = line.strip()
+                match = re.search(
+                    r"Transferred:\s+([\d.]+\s\w+)\s*/\s*([\d.]+\s\w+),.*?([\d.]+\s\w+/s),\s*ETA\s*([\dhms]+)",
+                    line,
+                )
+                if match:
+                    self.speed_var.set(f"Speed: {match.group(3)}")
+                    self.eta_var.set(f"ETA: {match.group(4)}")
+                    self.status_var.set(f"Transferred: {match.group(1)} / {match.group(2)}")
+                if os.environ.get("SEABEE_RCLONE_DEBUG"):
+                    print(line, flush=True)
+
+            process.wait()
+            rc = process.returncode
+            description = self._describe_rclone_exit(rc)
+
+            if rc in (0, 9):
+                print(f"[SeaBee] rclone finished: {description}", flush=True)
+                return
+
+            if rc == 6:
+                # Some files failed all internal retries (e.g. permission denied
+                # on system files). The run as a whole succeeded.
+                print(
+                    f"[SeaBee] rclone reported non-fatal errors ({description}). "
+                    "Continuing — check the log above for skipped files.",
+                    flush=True,
+                )
+                return
+
+            if rc in self._RCLONE_RETRYABLE_CODES:
+                wait = min(backoff_seconds, max_backoff)
+                print(
+                    f"[SeaBee] rclone failed with {description} "
+                    f"Retrying in {wait}s (attempt {attempt + 1})…",
+                    flush=True,
+                )
+                self.status_var.set(
+                    f"Network/transient error ({description.split(' — ', 1)[1]}). "
+                    f"Retrying in {wait}s…"
+                )
+                time.sleep(wait)
+                backoff_seconds = min(backoff_seconds * 2, max_backoff)
+                continue
+
+            # Anything else is a fatal/configuration error — don't loop forever.
+            raise RuntimeError(f"rclone failed with {description}")
 
     def upload_folder(self, folder: str) -> None:
         try:
