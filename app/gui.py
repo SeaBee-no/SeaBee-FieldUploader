@@ -689,10 +689,7 @@ class S3UploaderApp(ttk.Frame):
             "--filter", "- lost+found/**",
             "--filter", "- Thumbs.db",
             "--filter", "- desktop.ini",
-            "--retries", "10000",
             "--low-level-retries", "10000",
-            "--retries-sleep", "30s",
-            "--timeout", "1h",
             "--contimeout", "1m",
         ]
         if include_yaml_only:
@@ -722,8 +719,12 @@ class S3UploaderApp(ttk.Frame):
             )
 
             assert process.stdout is not None
-            for line in process.stdout:
-                line = line.strip()
+            for raw_line in process.stdout:
+                line = raw_line.rstrip("\r\n")
+                # Always echo rclone's output to our console window so the user
+                # can see exactly what it's doing (transfers, retries, errors).
+                print(line, flush=True)
+
                 match = re.search(
                     r"Transferred:\s+([\d.]+\s\w+)\s*/\s*([\d.]+\s\w+),.*?([\d.]+\s\w+/s),\s*ETA\s*([\dhms]+)",
                     line,
@@ -732,8 +733,6 @@ class S3UploaderApp(ttk.Frame):
                     self.speed_var.set(f"Speed: {match.group(3)}")
                     self.eta_var.set(f"ETA: {match.group(4)}")
                     self.status_var.set(f"Transferred: {match.group(1)} / {match.group(2)}")
-                if os.environ.get("SEABEE_RCLONE_DEBUG"):
-                    print(line, flush=True)
 
             process.wait()
             rc = process.returncode
